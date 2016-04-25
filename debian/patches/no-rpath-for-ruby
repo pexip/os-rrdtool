@@ -1,15 +1,25 @@
---- a/bindings/ruby/extconf.rb
-+++ b/bindings/ruby/extconf.rb
-@@ -3,9 +3,9 @@
+Description: Disable rpath in ruby bindings
+ This fixes lintian warning binary-or-shlib-defines-rpath.
+Author: Bernd Zeimetz <bzed@debian.org>
+Forwarded: no
+Last-Update: 2015-08-09
+
+--- rrdtool-1.5.4.orig/bindings/ruby/extconf.rb
++++ rrdtool-1.5.4/bindings/ruby/extconf.rb
+@@ -3,16 +3,6 @@
  
  require 'mkmf'
  
 -if /linux/ =~ RUBY_PLATFORM
 -   $LDFLAGS += ' -Wl,--rpath -Wl,$(EPREFIX)/lib'
 -elsif /solaris/ =~ RUBY_PLATFORM
-+#if /linux/ =~ RUBY_PLATFORM
-+#   $LDFLAGS += ' -Wl,--rpath -Wl,$(EPREFIX)/lib'
-+if /solaris/ =~ RUBY_PLATFORM
-    $LDFLAGS += ' -R$(EPREFIX)/lib'
- elsif /hpux/ =~ RUBY_PLATFORM
-    $LDFLAGS += ' +b$(EPREFIX)/lib'
+-   $LDFLAGS += ' -R$(EPREFIX)/lib'
+-elsif /hpux/ =~ RUBY_PLATFORM
+-   $LDFLAGS += ' +b$(EPREFIX)/lib'
+-elsif /aix/ =~ RUBY_PLATFORM
+-   $LDFLAGS += ' -blibpath:$(EPREFIX)/lib'
+-end
+-
+ dir_config("rrd",['$(ABS_TOP_BUILDDIR)/src', '$(ABS_TOP_SRCDIR)/src'],'$(ABS_TOP_BUILDDIR)/src/.libs')
+ have_library("rrd", "rrd_create")
+ create_makefile("RRD")

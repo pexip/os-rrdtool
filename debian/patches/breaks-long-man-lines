@@ -1,0 +1,123 @@
+Description: Allow breaking of long lines in max
+ .
+ Adds zero width breaking space in long lines as hints where to cut.
+ .
+ Work around pod2man than don't convert them to \: as it should.
+Author: Jean-Michel Vourgère <nirgal@debian.org>
+Forwarded: no
+Last-Update: 2015-08-09
+
+Index: rrdtool/doc/Makefile.am
+===================================================================
+--- rrdtool.orig/doc/Makefile.am
++++ rrdtool/doc/Makefile.am
+@@ -56,10 +56,10 @@ all-local: link man txt html-local
+ 	perl -n -e 'if (/^=include\s+(\S+)/){open F,"$$1.inc" || die $$?;print <F>; close F} else {print}'  $<  > $@
+ 
+ .pod.1 .pm.1 .pl.1:
+-	$(AM_V_GEN)@POD2MAN@ --release=$(VERSION) --center=rrdtool $<  > $@
++	$(AM_V_GEN)@POD2MAN@ --release=$(VERSION) --center=rrdtool --utf8 $< | sed -e $$'s|\u200B|\\\\:|g' > $@
+ 
+ .pod.3:
+-	$(AM_V_GEN)@POD2MAN@ --release=$(VERSION) --center=rrdtool --section=3 $< > $@
++	$(AM_V_GEN)@POD2MAN@ --release=$(VERSION) --center=rrdtool --section=3 --utf8 $< | sed -e $$'s|\u200B|\\\\:|g' > $@
+ 
+ .1.txt .3.txt:
+ 	$(AM_V_GEN)GROFF_NO_SGR=1 @NROFF@ -man -Tlp $< > $@
+Index: rrdtool/doc/rrdgraph_data.pod
+===================================================================
+--- rrdtool.orig/doc/rrdgraph_data.pod
++++ rrdtool/doc/rrdgraph_data.pod
+@@ -4,7 +4,7 @@ rrdgraph_data - preparing data for graph
+ 
+ =head1 SYNOPSIS
+ 
+-B<DEF:>I<E<lt>vnameE<gt>>=I<E<lt>rrdfileE<gt>>:I<E<lt>ds-nameE<gt>>:I<E<lt>CFE<gt>>[:step=I<E<lt>stepE<gt>>][:start=I<E<lt>timeE<gt>>][:end=I<E<lt>timeE<gt>>][:reduce=I<E<lt>B<CF>E<gt>>][:daemon=I<E<lt>addressE<gt>>]
++B<DEF:>I<E<lt>vnameE<gt>>=I<E<lt>rrdfileE<gt>>:I<E<lt>ds-nameE<gt>>:I<E<lt>CFE<gt>>[:step=I<E<lt>stepE<gt>>][:start=I<E<lt>timeE<gt>>]E<0x200B>[:end=I<E<lt>timeE<gt>>]E<0x200B>[:reduce=I<E<lt>B<CF>E<gt>>]E<0x200B>[:daemon=I<E<lt>addressE<gt>>]
+ 
+ B<VDEF>:I<vname>=I<RPN expression>
+ 
+@@ -28,7 +28,7 @@ mixed case names for variables since ope
+ 
+ =head1 DEF
+ 
+-B<DEF:>I<E<lt>vnameE<gt>>=I<E<lt>rrdfileE<gt>>:I<E<lt>ds-nameE<gt>>:I<E<lt>CFE<gt>>[:step=I<E<lt>stepE<gt>>][:start=I<E<lt>timeE<gt>>][:end=I<E<lt>timeE<gt>>][:reduce=I<E<lt>B<CF>E<gt>>][:daemon=I<E<lt>addressE<gt>>]
++B<DEF:>I<E<lt>vnameE<gt>>=I<E<lt>rrdfileE<gt>>:I<E<lt>ds-nameE<gt>>:I<E<lt>CFE<gt>>[:step=I<E<lt>stepE<gt>>][:start=I<E<lt>timeE<gt>>]E<0x200B>[:end=I<E<lt>timeE<gt>>]E<0x200B>[:reduce=I<E<lt>B<CF>E<gt>>]E<0x200B>[:daemon=I<E<lt>addressE<gt>>]
+ 
+ This command fetches data from an B<RRD> file.  The virtual name
+ I<vname> can then be used throughout the rest of the script. By
+Index: rrdtool/doc/rrdgraph_graph.pod
+===================================================================
+--- rrdtool.orig/doc/rrdgraph_graph.pod
++++ rrdtool/doc/rrdgraph_graph.pod
+@@ -12,11 +12,11 @@ B<GPRINT>B<:>I<vname>B<:>I<format>
+ 
+ B<COMMENT>B<:>I<text>
+ 
+-B<VRULE>B<:>I<time>B<#>I<color>[B<:>[I<legend>][B<:dashes>[B<=>I<on_s>[,I<off_s>[,I<on_s>,I<off_s>]...]][B<:dash-offset=>I<offset>]]]
++B<VRULE>B<:>I<time>B<#>I<color>[B<:>[I<legend>][B<:dashes>[B<=>I<on_s>[,I<off_s>[,I<on_s>,I<off_s>]...]]E<0x200B>[B<:dash-offset=>I<offset>]]]
+ 
+-B<HRULE>B<:>I<value>B<#>I<color>[B<:>[I<legend>][B<:dashes>[B<=>I<on_s>[,I<off_s>[,I<on_s>,I<off_s>]...]][B<:dash-offset=>I<offset>]]]
++B<HRULE>B<:>I<value>B<#>I<color>[B<:>[I<legend>][B<:dashes>[B<=>I<on_s>[,I<off_s>[,I<on_s>,I<off_s>]...]]E<0x200B>[B<:dash-offset=>I<offset>]]]
+ 
+-B<LINE>[I<width>]B<:>I<value>[B<#>I<color>][B<:>[I<legend>][B<:STACK>][B<:skipscale>][B<:dashes>[B<=>I<on_s>[,I<off_s>[,I<on_s>,I<off_s>]...]][B<:dash-offset=>I<offset>]]]
++B<LINE>[I<width>]B<:>I<value>[B<#>I<color>][B<:>[I<legend>][B<:STACK>][B<:skipscale>][B<:dashes>[B<=>I<on_s>E<0x200B>[,I<off_s>E<0x200B>[,I<on_s>,I<off_s>]...]]E<0x200B>[B<:dash-offset=>I<offset>]]]
+ 
+ B<AREA>B<:>I<value>[B<#>I<color>][B<:>[I<legend>][B<:STACK>][B<:skipscale>]]
+ 
+@@ -276,7 +276,7 @@ Text is printed literally in the legend
+ RRDtool 1.2 you have to escape colons in COMMENT text in the same way you
+ have to escape them in B<*PRINT> commands by writing B<'\:'>.
+ 
+-=head3 B<VRULE>B<:>I<time>B<#>I<color>[B<:>[I<legend>][B<:dashes>[B<=>I<on_s>[,I<off_s>[,I<on_s>,I<off_s>]...]][B<:dash-offset=>I<offset>]]]
++=head3 B<VRULE>B<:>I<time>B<#>I<color>[B<:>[I<legend>][B<:dashes>[B<=>I<on_s>[,I<off_s>[,I<on_s>,I<off_s>]...]]E<0x200B>[B<:dash-offset=>I<offset>]]]
+ 
+ Draw a vertical line at I<time>.  Its color is composed from three
+ hexadecimal numbers specifying the rgb color components (00 is off, FF is
+@@ -286,13 +286,13 @@ from a B<VDEF>. It is an error to use I<
+ Dashed lines can be drawn using the B<dashes> modifier. See B<LINE> for more
+ details.
+ 
+-=head3 B<HRULE>B<:>I<value>B<#>I<color>[B<:>[I<legend>][B<:dashes>[B<=>I<on_s>[,I<off_s>[,I<on_s>,I<off_s>]...]][B<:dash-offset=>I<offset>]]]
++=head3 B<HRULE>B<:>I<value>B<#>I<color>[B<:>[I<legend>][B<:dashes>[B<=>I<on_s>[,I<off_s>[,I<on_s>,I<off_s>]...]]E<0x200B>[B<:dash-offset=>I<offset>]]]
+ 
+ Draw a horizontal line at I<value>.  HRULE acts much like LINE except that
+ will have no effect on the scale of the graph. If a HRULE is outside the
+ graphing area it will just not be visible and it will not appear in the legend by default.
+ 
+-=head3 B<LINE>[I<width>]B<:>I<value>[B<#>I<color>][B<:>[I<legend>][B<:STACK>][B<:skipscale>][B<:dashes>[B<=>I<on_s>[,I<off_s>[,I<on_s>,I<off_s>]...]][B<:dash-offset=>I<offset>]]]
++=head3 B<LINE>[I<width>]B<:>I<value>[B<#>I<color>][B<:>[I<legend>][B<:STACK>][B<:skipscale>][B<:dashes>[B<=>I<on_s>E<0x200B>[,I<off_s>E<0x200B>[,I<on_s>,I<off_s>]...]]E<0x200B>[B<:dash-offset=>I<offset>]]]
+ 
+ Draw a line of the specified width onto the graph. I<width> can be a
+ floating point number. If the color is not specified, the drawing is done
+@@ -320,7 +320,7 @@ When you do not specify a color, you can
+ you want to use B<STACK>, use the "LINEx:<value>::STACK" form.
+ 
+ 
+-=head3 B<AREA>B<:>I<value>[B<#>I<color>[B<#>I<color2>]][B<:>[I<legend>][B<:STACK>][B<:skipscale>][B<:gradheight=>I<y>]
++=head3 B<AREA>B<:>I<value>[B<#>I<color>[B<#>I<color2>]][B<:>[I<legend>][B<:STACK>][B<:skipscale>]E<0x200B>[B<:gradheight=>I<y>]
+ 
+ See B<LINE>, however the area between the x-axis and the line will
+ be filled.
+Index: rrdtool/doc/rrdgraph_libdbi.pod
+===================================================================
+--- rrdtool.orig/doc/rrdgraph_libdbi.pod
++++ rrdtool/doc/rrdgraph_libdbi.pod
+@@ -4,7 +4,7 @@ rrdgraph_libdbi - fetching data for grap
+ 
+ =head1 SYNOPSIS
+ 
+-E<lt>rrdfileE<gt> = B<sql//E<lt>libdbi driverE<gt>/E<lt>driver-option-nameE<gt>=E<lt>driver-option-valueE<gt>/...[/rrdminstepsize=E<lt>stepsizeE<gt>][/rrdfillmissing=E<lt>fill missing n secondsE<gt>]//E<lt>tableE<gt>/E<lt>unixtimestamp columnE<gt>/E<lt>data value columnE<gt>[/derive]/E<lt>where clause 1E<gt>/.../E<lt>where clause nE<gt>>
++E<lt>rrdfileE<gt> = B<sql//E<lt>libdbi driverE<gt>/E<lt>driver-option-nameE<gt>=E<lt>driver-option-valueE<gt>/...E<0x200B>[/rrdminstepsize=E<lt>stepsizeE<gt>]E<0x200B>[/rrdfillmissing=E<lt>fill missing n secondsE<gt>]E<0x200B>//E<lt>tableE<gt>E<0x200B>/E<lt>unixtimestamp columnE<gt>E<0x200B>/E<lt>data value columnE<gt>E<0x200B>[/derive]E<0x200B>/E<lt>where clause 1E<gt>E<0x200B>/...E<0x200B>/E<lt>where clause nE<gt>>
+ 
+ =head1 DESCRIPTION
+ 
+@@ -99,7 +99,7 @@ Here an example of a table in a MySQL da
+ and the RRDKeyID we want to graph for is: 1141942900757789274
+ 
+ The pseudo rrd-filename to access this is:
+-"sql//mysql/host=127.0.0.1/dbname=rrd/username=rrd/password=secret//RRDValue/UnixTimeStamp/value/RRDKeyID=1141464142203608274"
++"sql//mysql/host=127.0.0.1/dbname=rrd/username=rrd/password=secretE<0x200B>//RRDValueE<0x200B>/UnixTimeStampE<0x200B>/valueE<0x200B>/RRDKeyID=1141464142203608274"
+ 
+ To illustrate this here a command to create a graph that contains the actual values.
+ 

@@ -6,10 +6,11 @@ rrdupdate - Store a new set of values into the RRD
 
 B<rrdtool> {B<update> | B<updatev>} I<filename>
 S<[B<--template>|B<-t> I<ds-name>[B<:>I<ds-name>]...]>
-S<[B<--daemon> I<address>]> [B<-->]
-S<B<N>|I<timestamp>B<:>I<value>[B<:>I<value>...]>
-S<I<at-timestamp>B<@>I<value>[B<:>I<value>...]>
-S<[I<timestamp>B<:>I<value>[B<:>I<value>...] ...]>
+S<[B<--skip-past-updates>|B<-s>]>
+S<[B<--daemon>|B<-d> I<address>]> [B<-->]
+S<B<N>B<:>I<value>[B<:>I<value>]...>
+S<I<timestamp>B<:>I<value>[B<:>I<value>]...>
+S<I<at-timestamp>B<@>I<value>[B<:>I<value>]...>
 
 =head1 DESCRIPTION
 
@@ -60,16 +61,28 @@ function. If this is done accidentally (and this can only be done
 using the template switch), B<RRDtool> will ignore the value specified
 for the COMPUTE B<DST>.
 
-=item B<--daemon> I<address>
+The caching daemon L<rrdcached> cannot be used together with templates yet.
+
+=item B<--skip-past-updates>|B<-s>
+
+When updating an rrd file with data earlier than the latest update already
+applied, rrdtool will issue an error message an abort. This option instructs
+rrdtool to silently skip such data. It can be useful when re-playing old
+data into an rrd file and you are not sure how many updates have already
+been applied.
+
+=item B<--daemon>|B<-d> I<address>
 
 If given, B<RRDTool> will try to connect to the caching daemon L<rrdcached>
-at I<address> and will fail if the connection cannot be established. If the
-connection is successfully established the values will be sent to the daemon
-instead of accessing the files directly.
+at I<address>. If the connection is successfully established the values will
+be sent to the daemon instead of accessing the files directly. If the
+connection cannot be established it will fall back to direct file-access.
+While this is convenient, it can silently create problems so please read
+the L<warning in the examples|/EXAMPLES>.
 
 For a list of accepted formats, see the B<-l> option in the L<rrdcached> manual.
 
-=item B<N>|I<timestamp>B<:>I<value>[B<:>I<value>...]
+=item {B<N> | I<timestamp>}B<:>I<value>[B<:>I<value>]...
 
 The data used for updating the RRD was acquired at a certain
 time. This time can either be defined in seconds since 1970-01-01 or
@@ -79,12 +92,8 @@ time. An AT_STYLE TIME SPECIFICATION (see the I<rrdfetch>
 documentation) may also be used by delimiting the end of the time
 specification with the '@' character instead of a ':'. Getting the
 timing right to the second is especially important when you are
-working with data-sources of type B<COUNTER>, B<DERIVE> or
-B<ABSOLUTE>.
-
-When using negative time values, options and data have to be separated
-by two dashes (B<-->), else the time value would be parsed as an option.
-See below for an example.
+working with data-sources of type B<COUNTER>, B<DERIVE>, B<DCOUNTER>,
+B<DDERIVE> or B<ABSOLUTE>.
 
 When using negative time values, options and data have to be separated
 by two dashes (B<-->), else the time value would be parsed as an option.
@@ -116,6 +125,13 @@ If this environment variable is set it will have the same effect as specifying
 the C<--daemon> option on the command line. If both are present, the command
 line argument takes precedence.
 
+=item B<RRDCACHED_STRIPPATH>
+
+If this environment variable is set it will strip the leading string from the
+filename prior to sending the filename to rrdcached.
+This is mostly intended to allow rrdcached to work with xymon and cacti tools
+without having to modify those tools.
+
 =back
 
 =head1 EXAMPLES
@@ -143,14 +159,6 @@ C<rrdtool update demo3.rrd -- -5:21 N:42>
 
 Update the database file demo3.rrd two times, using five seconds in the
 past and the current time as the update times.
-
-=item *
-
-C<rrdtool update --cache /var/lib/rrd/demo3.rrd N:42>
-
-Update the file C</var/lib/rrd/demo3.rrd> with a single data source, using the
-current time. If the caching daemon cannot be reached, do B<not> fall back to
-direct file access.
 
 =item *
 

@@ -1,6 +1,6 @@
 /**
  * RRDTool - src/rrd_client.h
- * Copyright (C) 2008 Florian octo Forster
+ * Copyright (C) 2008-2010  Florian octo Forster
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -24,31 +24,15 @@
  *   Florian octo Forster <octo at verplant.org>
  **/
 
-#ifndef __RRD_CLIENT_H
-#define __RRD_CLIENT_H 1
+#ifndef RRD_CLIENT_H_887A36401735431B937F44DFCAE0B7C9
+#define RRD_CLIENT_H_887A36401735431B937F44DFCAE0B7C9 1
 
-#ifndef WIN32
 # ifdef HAVE_STDINT_H
 #  include <stdint.h>
-# else
-#   ifdef HAVE_INTTYPES_H
-#      include <inttypes.h>
-#   else
-#      error "you should have stdint.h or inttypes.h to compile this"
-#   endif
 # endif
-#else
-#	include <stdlib.h>
-	typedef signed char 	int8_t;
-	typedef unsigned char 	uint8_t;
-	typedef signed int 	int16_t;
-	typedef unsigned int 	uint16_t;
-	typedef signed long int 	int32_t;
-	typedef unsigned long int 	uint32_t;
-	typedef signed long long int 	int64_t;
-	typedef unsigned long long int 	uint64_t;
-#endif
 
+/* max length of socket command or response */
+#define RRD_CMD_MAX 4096
 
 #ifndef RRDCACHED_DEFAULT_ADDRESS
 # define RRDCACHED_DEFAULT_ADDRESS "unix:/tmp/rrdcached.sock"
@@ -56,28 +40,46 @@
 
 #define RRDCACHED_DEFAULT_PORT "42217"
 #define ENV_RRDCACHED_ADDRESS "RRDCACHED_ADDRESS"
+#define ENV_RRDCACHED_STRIPPATH "RRDCACHED_STRIPPATH"
 
-
-// Windows version has no daemon/client support
-
-#ifndef WIN32
 int rrdc_connect (const char *addr);
 int rrdc_is_connected(const char *daemon_addr);
+int rrdc_is_any_connected(void);
 int rrdc_disconnect (void);
 
 int rrdc_update (const char *filename, int values_num,
-        const char * const *values);
+    const char * const *values);
+
+rrd_info_t * rrdc_info (const char *filename);
+time_t rrdc_last (const char *filename);
+time_t rrdc_first (const char *filename, int rraindex);
+int rrdc_create (const char *filename,
+    unsigned long pdp_step,
+    time_t last_up,
+    int no_overwrite,
+    int argc,
+    const char **argv);
+
+int rrdc_create_r2 (const char *filename,
+    unsigned long pdp_step,
+    time_t last_up,
+    int no_overwrite,
+    const char **sources,
+    const char *_template,
+    int argc,
+    const char **argv);
 
 int rrdc_flush (const char *filename);
+int rrdc_forget (const char *filename);
 int rrdc_flush_if_daemon (const char *opt_daemon, const char *filename);
 
-#else
-#	define rrdc_flush_if_daemon(a,b) 0
-#	define rrdc_connect(a) 0
-#	define rrdc_is_connected(a) 0
-#	define rrdc_flush(a) 0
-#	define rrdc_update(a,b,c) 0
-#endif
+int rrdc_fetch (const char *filename,
+    const char *cf,
+    time_t *ret_start, time_t *ret_end,
+    unsigned long *ret_step,
+    unsigned long *ret_ds_num,
+    char ***ret_ds_names,
+    rrd_value_t **ret_data);
 
 struct rrdc_stats_s
 {

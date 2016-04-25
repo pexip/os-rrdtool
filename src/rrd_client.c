@@ -1,6 +1,6 @@
 /**
  * RRDTool - src/rrd_client.c
- * Copyright (C) 2008 Florian octo Forster
+ * Copyright (C) 2008-2013  Florian octo Forster
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -8,10 +8,10 @@
  * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
  * sell copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -25,26 +25,40 @@
  *   Sebastian tokkee Harl <sh at tokkee.org>
  **/
 
+#ifdef WIN32
+
+#include <ws2tcpip.h> // contain #include <winsock2.h>
+// Need to link with Ws2_32.lib
+#pragma comment(lib, "ws2_32.lib")
+#include <time.h>
+#include <io.h>
+#include <fcntl.h>
+#include <tchar.h>
+#include <locale.h>
+
+#endif
+
+#include "rrd_strtod.h"
 #include "rrd.h"
 #include "rrd_tool.h"
 #include "rrd_client.h"
+#include "mutex.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include <errno.h>
 #include <assert.h>
+#ifndef WIN32
+#include <strings.h>
 #include <pthread.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <netdb.h>
-#include <limits.h>
-
-#ifndef ENODATA
-#define ENODATA ENOENT
+#include <locale.h>
 #endif
+#include <sys/types.h>
+#include <limits.h>
 
 struct rrdc_response_s
 {
@@ -55,10 +69,13 @@ struct rrdc_response_s
 };
 typedef struct rrdc_response_s rrdc_response_t;
 
-static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static mutex_t lock = MUTEX_INITIALIZER;
 static int sd = -1;
-static FILE *sh = NULL;
 static char *sd_path = NULL; /* cache the path for sd */
+
+static char _inbuf[RRD_CMD_MAX];
+static char *inbuf = _inbuf;
+static size_t inbuf_used = 0;
 
 /* get_path: Return a path name appropriate to be sent to the daemon.
  *
@@ -67,13 +84,17 @@ static char *sd_path = NULL; /* cache the path for sd */
  * into existing solutions (as requested by Tobi). Else, absolute path names
  * are not allowed, since path name translation is done by the server.
  *
+ * The caller must call free() on the returned value.
+ *
  * One must hold `lock' when calling this function. */
-static const char *get_path (const char *path, char *resolved_path) /* {{{ */
+static char *get_path (const char *path) /* {{{ */
 {
-  const char *ret = path;
+  char *ret = NULL;
+  const char *strip = getenv(ENV_RRDCACHED_STRIPPATH);
+  size_t len;
   int is_unix = 0;
 
-  if ((path == NULL) || (resolved_path == NULL) || (sd_path == NULL))
+  if ((path == NULL) || (sd_path == NULL))
     return (NULL);
 
   if ((*sd_path == '/')
@@ -82,36 +103,243 @@ static const char *get_path (const char *path, char *resolved_path) /* {{{ */
 
   if (is_unix)
   {
-    ret = realpath(path, resolved_path);
-    if (ret == NULL)
-      rrd_set_error("realpath(%s): %s", path, rrd_strerror(errno));
+    if (path == NULL || strlen(path) == 0) return NULL;
+    ret = realpath(path, NULL);
+    if (ret == NULL) {
+        /* this may happen, because the file DOES NOT YET EXIST (as would be
+         * the case for rrdcreate) - retry by stripping the last path element,
+         * resolving the directory and re-concatenate them.... */
+        char *dir_path;
+        char *lastslash = strrchr(path, '/');
+        char *dir = (lastslash == NULL || lastslash == path) ? strdup(".")
+#ifdef HAVE_STRNDUP
+                : strndup(path, lastslash - path);
+#else
+                : strdup(path);
+                if (lastslash && lastslash != path){
+                  dir[lastslash-path]='\0';
+                }
+#endif
+        if (dir != NULL) {
+            dir_path = realpath(dir, NULL);
+            free(dir);
+            if (dir_path == NULL) {
+              rrd_set_error("realpath(%s): %s", path, rrd_strerror(errno));
+              return NULL;
+            }
+            ret = malloc(strlen(dir_path)
+                 + (lastslash ? strlen(lastslash) : 1 + strlen(path)) + 1);
+            if (ret == NULL) {
+              rrd_set_error("cannot allocate memory");
+              free(dir_path);
+              return NULL;
+            }
+
+            strcpy(ret, dir_path);
+            if (lastslash != NULL) {
+                strcat(ret, lastslash);
+            } else {
+                strcat(ret, "/");
+                strcat(ret, path);
+            }
+            free(dir_path);
+        } else {
+            // out of memory
+            rrd_set_error("cannot allocate memory");
+            ret = NULL; // redundant, but make intention clear
+        }
+    }
     return ret;
   }
   else
   {
-    if (*path == '/') /* not absolute path */
+    if (*path == '/') /* absolute path */
     {
-      rrd_set_error ("absolute path names not allowed when talking "
+      /* if we are stripping, then check and remove the head */
+      if (strip) {
+	      len = strlen(strip);
+	      if (strncmp(path,strip,len)==0) {
+		      path += len;
+		      while (*path == '/')
+			      path++;
+		      return strdup(path);
+	      }
+      } else
+        rrd_set_error ("absolute path names not allowed when talking "
           "to a remote daemon");
       return NULL;
     }
   }
 
-  return path;
+  return strdup(path);
 } /* }}} char *get_path */
+
+static size_t strsplit (char *string, char **fields, size_t size) /* {{{ */
+{
+  size_t i;
+  char *ptr;
+  char *saveptr;
+
+  i = 0;
+  ptr = string;
+  saveptr = NULL;
+  while ((fields[i] = strtok_r (ptr, " \t\r\n", &saveptr)) != NULL)
+  {
+    ptr = NULL;
+    i++;
+
+    if (i >= size)
+      break;
+  }
+
+  return (i);
+} /* }}} size_t strsplit */
+
+static int parse_header (char *line, /* {{{ */
+    char **ret_key, char **ret_value)
+{
+  char *tmp;
+
+  *ret_key = line;
+
+  tmp = strchr (line, ':');
+  if (tmp == NULL)
+    return (-1);
+
+  do
+  {
+    *tmp = 0;
+    tmp++;
+  }
+  while ((tmp[0] == ' ') || (tmp[0] == '\t'));
+
+  if (*tmp == 0)
+    return (-1);
+
+  *ret_value = tmp;
+  return (0);
+} /* }}} int parse_header */
+
+static int parse_ulong_header (char *line, /* {{{ */
+    char **ret_key, unsigned long *ret_value)
+{
+  char *str_value;
+  char *endptr;
+  int status;
+
+  str_value = NULL;
+  status = parse_header (line, ret_key, &str_value);
+  if (status != 0)
+    return (status);
+
+  endptr = NULL;
+  errno = 0;
+  *ret_value = (unsigned long) strtol (str_value, &endptr, /* base = */ 0);
+  if ((endptr == str_value) || (errno != 0))
+    return (-1);
+
+  return (0);
+} /* }}} int parse_ulong_header */
+
+static int parse_char_array_header (char *line, /* {{{ */
+    char **ret_key, char **array, size_t array_len, int alloc)
+{
+  char **tmp_array;
+  char *value;
+  size_t num;
+  int status;
+
+  if ((tmp_array = (char**)malloc(array_len * sizeof (char*))) == NULL)
+    return (-1);
+
+  value = NULL;
+  status = parse_header (line, ret_key, &value);
+  if (status != 0) {
+    free(tmp_array);
+    return (-1);
+  }
+
+  num = strsplit (value, tmp_array, array_len);
+  if (num != array_len)
+  {
+    free(tmp_array);
+    return (-1);
+  }
+
+  if (alloc == 0)
+  {
+    memcpy (array, tmp_array, array_len * sizeof (char*));
+  }
+  else
+  {
+    size_t i;
+
+    for (i = 0; i < array_len; i++)
+      array[i] = strdup (tmp_array[i]);
+  }
+
+  free(tmp_array);
+
+  return (0);
+} /* }}} int parse_char_array_header */
+
+static int parse_value_array_header (char *line, /* {{{ */
+    time_t *ret_time, rrd_value_t *array, size_t array_len)
+{
+  char *str_key;
+  char **str_array;
+  char *endptr;
+  int status;
+  size_t i;
+  double tmp;
+
+  if ((str_array = (char**)malloc(array_len * sizeof (char*))) == NULL)
+    return (-1);
+
+  str_key = NULL;
+  status = parse_char_array_header (line, &str_key,
+      str_array, array_len, /* alloc = */ 0);
+  if (status != 0) {
+    free(str_array);
+    return (-1);
+  }
+
+  errno = 0;
+  endptr = NULL;
+  *ret_time = (time_t) strtol (str_key, &endptr, /* base = */ 10);
+  if ((endptr == str_key) || (errno != 0)) {
+    free(str_array);
+    return (-1);
+  }
+
+  /* Enforce the "C" locale so that parsing of the response is not dependent on
+   * the locale. For example, when using a German locale the strtod() function
+   * will expect a comma as the decimal separator, i.e. "42,77". */
+  for (i = 0; i < array_len; i++)
+  {
+    if( rrd_strtodbl(str_array[i], 0, &tmp, "parse_value_array_header") == 2) {
+        array[i] = (rrd_value_t)tmp;
+    } else {
+        free(str_array);
+        return (-1);
+    }
+  }
+
+  free(str_array);
+  return (0);
+} /* }}} int parse_value_array_header */
 
 /* One must hold `lock' when calling `close_connection'. */
 static void close_connection (void) /* {{{ */
 {
-  if (sh != NULL)
+  if (sd >= 0)
   {
-    fclose (sh);
-    sh = NULL;
-    sd = -1;
-  }
-  else if (sd >= 0)
-  {
+#ifdef WIN32
+    closesocket(sd);
+    WSACleanup();
+#else
     close (sd);
+#endif
     sd = -1;
   }
 
@@ -173,7 +401,7 @@ static int buffer_add_string (const char *str, /* {{{ */
 static int buffer_add_value (const char *value, /* {{{ */
     char **buffer_ret, size_t *buffer_size_ret)
 {
-  char temp[4096];
+  char temp[RRD_CMD_MAX];
 
   if (strncmp (value, "N:", 2) == 0)
     snprintf (temp, sizeof (temp), "%lu:%s",
@@ -184,6 +412,16 @@ static int buffer_add_value (const char *value, /* {{{ */
 
   return (buffer_add_string (temp, buffer_ret, buffer_size_ret));
 } /* }}} int buffer_add_value */
+
+static int buffer_add_ulong (const unsigned long value, /* {{{ */
+    char **buffer_ret, size_t *buffer_size_ret)
+{
+  char temp[RRD_CMD_MAX];
+
+  snprintf (temp, sizeof (temp), "%lu", value);
+  temp[sizeof (temp) - 1] = 0;
+  return (buffer_add_string (temp, buffer_ret, buffer_size_ret));
+} /* }}} int buffer_add_ulong */
 
 /* Remove trailing newline (NL) and carriage return (CR) characters. Similar to
  * the Perl function `chomp'. Returns the number of characters that have been
@@ -226,19 +464,77 @@ static void response_free (rrdc_response_t *res) /* {{{ */
   free (res);
 } /* }}} void response_free */
 
+static int recvline (char *buf, size_t n) /* {{{ */
+{
+  size_t len;
+  char *s, *p, *t;
+
+  /* Sanity check */
+  if (n <= 0)
+    return (-1);
+
+  s = buf;
+  n--; /* leave space for the NULL */
+  while (n != 0)
+  {
+    /*
+         * If the buffer is empty, refill it.
+         */
+    if ((len = inbuf_used) <= 0)
+    {
+      inbuf = _inbuf;
+      inbuf_used = recv (sd, inbuf, RRD_CMD_MAX, 0);
+      if (inbuf_used <= 0)
+      {
+        if (s == buf)
+        {
+          /* EOF/error: stop with partial or no line */
+          return (-1);
+        }
+      }
+      len = inbuf_used;
+    }
+    p = inbuf;
+    /*
+         * Scan through at most n bytes of the current buffer,
+         * looking for '\n'.  If found, copy up to and including
+         * newline, and stop.  Otherwise, copy entire chunk
+         * and loop.
+         */
+    if (len > n)
+      len = n;
+    t = (char*)memchr((void *)p, '\n', len);
+    if (t != NULL)
+    {
+      len = ++t - p;
+      inbuf_used -= len;
+      inbuf = t;
+      (void)memcpy((void *)s, (void *)p, len);
+      s[len] = 0;
+      return (1);
+    }
+    inbuf_used -= len;
+    inbuf += len;
+    (void)memcpy((void *)s, (void *)p, len);
+    s += len;
+    n -= len;
+  }
+  *s = 0;
+  return (1);
+} /* }}} int recvline */
+
 static int response_read (rrdc_response_t **ret_response) /* {{{ */
 {
   rrdc_response_t *ret = NULL;
   int status = 0;
 
-  char buffer[4096];
-  char *buffer_ptr;
+  char buffer[RRD_CMD_MAX];
 
   size_t i;
 
 #define DIE(code) do { status = code; goto err_out; } while(0)
 
-  if (sh == NULL)
+  if (sd == -1)
     DIE(-1);
 
   ret = (rrdc_response_t *) malloc (sizeof (rrdc_response_t));
@@ -248,8 +544,7 @@ static int response_read (rrdc_response_t **ret_response) /* {{{ */
   ret->lines = NULL;
   ret->lines_num = 0;
 
-  buffer_ptr = fgets (buffer, sizeof (buffer), sh);
-  if (buffer_ptr == NULL)
+  if (recvline (buffer, sizeof (buffer)) == -1)
     DIE(-3);
 
   chomp (buffer);
@@ -277,8 +572,7 @@ static int response_read (rrdc_response_t **ret_response) /* {{{ */
 
   for (i = 0; i < ret->lines_num; i++)
   {
-    buffer_ptr = fgets (buffer, sizeof (buffer), sh);
-    if (buffer_ptr == NULL)
+    if (recvline (buffer, sizeof (buffer)) == -1)
       DIE(-6);
 
     chomp (buffer);
@@ -290,7 +584,6 @@ static int response_read (rrdc_response_t **ret_response) /* {{{ */
 
 out:
   *ret_response = ret;
-  fflush(sh);
   return (status);
 
 err_out:
@@ -302,24 +595,39 @@ err_out:
 
 } /* }}} rrdc_response_t *response_read */
 
+static int sendall (const char *msg, size_t len) /* {{{ */
+{
+  int ret = 0;
+  char *bufp = (char*)msg;
+
+  while (ret != -1 && len > 0) {
+    ret = send(sd, msg, len, 0);
+    if (ret > 0) {
+      bufp += ret;
+      len -= ret;
+    }
+  }
+
+  return ret;
+} /* }}} int sendall */
+
 static int request (const char *buffer, size_t buffer_size, /* {{{ */
     rrdc_response_t **ret_response)
 {
   int status;
   rrdc_response_t *res;
 
-  if (sh == NULL)
+  if (sd == -1)
     return (ENOTCONN);
 
-  status = (int) fwrite (buffer, buffer_size, /* nmemb = */ 1, sh);
-  if (status != 1)
+  status = sendall (buffer, buffer_size);
+  if (status == -1)
   {
     close_connection ();
     rrd_set_error("request: socket error (%d) while talking to rrdcached",
                   status);
     return (-1);
   }
-  fflush (sh);
 
   res = NULL;
   status = response_read (&res);
@@ -344,13 +652,13 @@ int rrdc_is_connected(const char *daemon_addr) /* {{{ */
     return 0;
   else if (daemon_addr == NULL)
   {
+    char *addr = getenv(ENV_RRDCACHED_ADDRESS);
     /* here we have to handle the case i.e.
      *   UPDATE --daemon ...; UPDATEV (no --daemon) ...
      * In other words: we have a cached connection,
      * but it is not specified in the current command.
      * Daemon is only implied in this case if set in ENV
      */
-    char *addr = getenv(ENV_RRDCACHED_ADDRESS);
     if (addr != NULL && strcmp(addr,"") != 0)
       return 1;
     else
@@ -363,8 +671,16 @@ int rrdc_is_connected(const char *daemon_addr) /* {{{ */
 
 } /* }}} int rrdc_is_connected */
 
+/* determine whether we are connected to any daemon */
+int rrdc_is_any_connected(void) {
+  return sd >= 0;
+}
+
 static int rrdc_connect_unix (const char *path) /* {{{ */
 {
+#ifdef WIN32
+  return (WSAEPROTONOSUPPORT);
+#else
   struct sockaddr_un sa;
   int status;
 
@@ -390,15 +706,8 @@ static int rrdc_connect_unix (const char *path) /* {{{ */
     return (status);
   }
 
-  sh = fdopen (sd, "r+");
-  if (sh == NULL)
-  {
-    status = errno;
-    close_connection ();
-    return (status);
-  }
-
   return (0);
+#endif
 } /* }}} int rrdc_connect_unix */
 
 static int rrdc_connect_network (const char *addr_orig) /* {{{ */
@@ -453,7 +762,7 @@ static int rrdc_connect_network (const char *addr_orig) /* {{{ */
   } /* if (*addr == '[') */
   else
   {
-    port = rindex(addr, ':');
+    port = strrchr(addr, ':');
     if (port != NULL)
     {
       *port = 0;
@@ -461,15 +770,28 @@ static int rrdc_connect_network (const char *addr_orig) /* {{{ */
     }
   }
 
+#ifdef WIN32
+  WORD wVersionRequested;
+  WSADATA wsaData;
+
+  wVersionRequested = MAKEWORD(2, 0);
+  status = WSAStartup(wVersionRequested, &wsaData);
+  if (status != 0)
+  {
+    rrd_set_error("failed to initialize socket library %d", status);
+    return (-1);
+  }
+#endif
+
   ai_res = NULL;
   status = getaddrinfo (addr,
                         port == NULL ? RRDCACHED_DEFAULT_PORT : port,
                         &ai_hints, &ai_res);
   if (status != 0)
   {
-    rrd_set_error ("failed to resolve address `%s' (port %s): %s",
+    rrd_set_error ("failed to resolve address '%s' (port %s): %s (%d)",
         addr, port == NULL ? RRDCACHED_DEFAULT_PORT : port,
-        gai_strerror (status));
+        gai_strerror (status), status);
     return (-1);
   }
 
@@ -490,15 +812,6 @@ static int rrdc_connect_network (const char *addr_orig) /* {{{ */
       close_connection();
       continue;
     }
-
-    sh = fdopen (sd, "r+");
-    if (sh == NULL)
-    {
-      status = errno;
-      close_connection ();
-      continue;
-    }
-
     assert (status == 0);
     break;
   } /* for (ai_ptr) */
@@ -516,17 +829,17 @@ int rrdc_connect (const char *addr) /* {{{ */
     addr = getenv (ENV_RRDCACHED_ADDRESS);
   }
 
-  if (addr == NULL || strcmp(addr,"") == 0 ) {
+  if (addr == NULL || strcmp(addr,"") == 0) {
     addr = NULL;
-    return 0;   
+    return 0;
   }
 
-  pthread_mutex_lock(&lock);
+  mutex_lock (&lock);
 
   if (sd >= 0 && sd_path != NULL && strcmp(addr, sd_path) == 0)
   {
     /* connection to the same daemon; use cached connection */
-    pthread_mutex_unlock (&lock);
+    mutex_unlock (&lock);
     return (0);
   }
   else
@@ -558,17 +871,17 @@ int rrdc_connect (const char *addr) /* {{{ */
       free (err);
   }
 
-  pthread_mutex_unlock (&lock);
+  mutex_unlock (&lock);
   return (status);
 } /* }}} int rrdc_connect */
 
 int rrdc_disconnect (void) /* {{{ */
 {
-  pthread_mutex_lock (&lock);
+  mutex_lock (&lock);
 
   close_connection();
 
-  pthread_mutex_unlock (&lock);
+  mutex_unlock (&lock);
 
   return (0);
 } /* }}} int rrdc_disconnect */
@@ -576,14 +889,14 @@ int rrdc_disconnect (void) /* {{{ */
 int rrdc_update (const char *filename, int values_num, /* {{{ */
 		const char * const *values)
 {
-  char buffer[4096];
+  char buffer[RRD_CMD_MAX];
   char *buffer_ptr;
   size_t buffer_free;
   size_t buffer_size;
   rrdc_response_t *res;
   int status;
   int i;
-  char file_path[PATH_MAX];
+  char *file_path;
 
   memset (buffer, 0, sizeof (buffer));
   buffer_ptr = &buffer[0];
@@ -593,18 +906,20 @@ int rrdc_update (const char *filename, int values_num, /* {{{ */
   if (status != 0)
     return (ENOBUFS);
 
-  pthread_mutex_lock (&lock);
-  filename = get_path (filename, file_path);
-  if (filename == NULL)
+  mutex_lock (&lock);
+  file_path = get_path (filename);
+  if (file_path == NULL)
   {
-    pthread_mutex_unlock (&lock);
+    mutex_unlock (&lock);
     return (-1);
   }
 
-  status = buffer_add_string (filename, &buffer_ptr, &buffer_free);
+  status = buffer_add_string (file_path, &buffer_ptr, &buffer_free);
+  free (file_path);
+
   if (status != 0)
   {
-    pthread_mutex_unlock (&lock);
+    mutex_unlock (&lock);
     return (ENOBUFS);
   }
 
@@ -613,7 +928,7 @@ int rrdc_update (const char *filename, int values_num, /* {{{ */
     status = buffer_add_value (values[i], &buffer_ptr, &buffer_free);
     if (status != 0)
     {
-      pthread_mutex_unlock (&lock);
+      mutex_unlock (&lock);
       return (ENOBUFS);
     }
   }
@@ -625,7 +940,7 @@ int rrdc_update (const char *filename, int values_num, /* {{{ */
 
   res = NULL;
   status = request (buffer, buffer_size, &res);
-  pthread_mutex_unlock (&lock);
+  mutex_unlock (&lock);
 
   if (status != 0)
     return (status);
@@ -636,15 +951,16 @@ int rrdc_update (const char *filename, int values_num, /* {{{ */
   return (status);
 } /* }}} int rrdc_update */
 
-int rrdc_flush (const char *filename) /* {{{ */
+static int rrdc_filebased_command (const char *command,
+                                   const char *filename) /* {{{ */
 {
-  char buffer[4096];
+  char buffer[RRD_CMD_MAX];
   char *buffer_ptr;
   size_t buffer_free;
   size_t buffer_size;
   rrdc_response_t *res;
   int status;
-  char file_path[PATH_MAX];
+  char *file_path;
 
   if (filename == NULL)
     return (-1);
@@ -653,22 +969,24 @@ int rrdc_flush (const char *filename) /* {{{ */
   buffer_ptr = &buffer[0];
   buffer_free = sizeof (buffer);
 
-  status = buffer_add_string ("flush", &buffer_ptr, &buffer_free);
+  status = buffer_add_string (command, &buffer_ptr, &buffer_free);
   if (status != 0)
     return (ENOBUFS);
 
-  pthread_mutex_lock (&lock);
-  filename = get_path (filename, file_path);
-  if (filename == NULL)
+  mutex_lock (&lock);
+  file_path = get_path (filename);
+  if (file_path == NULL)
   {
-    pthread_mutex_unlock (&lock);
+    mutex_unlock (&lock);
     return (-1);
   }
 
-  status = buffer_add_string (filename, &buffer_ptr, &buffer_free);
+  status = buffer_add_string (file_path, &buffer_ptr, &buffer_free);
+  free (file_path);
+
   if (status != 0)
   {
-    pthread_mutex_unlock (&lock);
+    mutex_unlock (&lock);
     return (ENOBUFS);
   }
 
@@ -679,17 +997,594 @@ int rrdc_flush (const char *filename) /* {{{ */
 
   res = NULL;
   status = request (buffer, buffer_size, &res);
-  pthread_mutex_unlock (&lock);
+  mutex_unlock (&lock);
 
   if (status != 0)
     return (status);
 
   status = res->status;
   response_free (res);
-
   return (status);
 } /* }}} int rrdc_flush */
 
+int rrdc_flush (const char *filename) {
+  return rrdc_filebased_command("flush", filename);
+}
+
+int rrdc_forget (const char *filename) {
+  return rrdc_filebased_command("forget", filename);
+}
+
+rrd_info_t * rrdc_info (const char *filename) /* {{{ */
+{
+  char buffer[RRD_CMD_MAX];
+  char *buffer_ptr;
+  size_t buffer_free;
+  size_t buffer_size;
+  rrdc_response_t *res;
+  int status;
+  char *file_path;
+  rrd_info_t *data = NULL, *cd;
+  rrd_infoval_t info;
+  unsigned int l;
+  rrd_info_type_t itype;
+  char *k, *s;
+
+  if (filename == NULL) {
+    rrd_set_error ("rrdc_info: no filename");
+    return (NULL);
+  }
+
+  memset (buffer, 0, sizeof (buffer));
+  buffer_ptr = &buffer[0];
+  buffer_free = sizeof (buffer);
+
+  status = buffer_add_string ("info", &buffer_ptr, &buffer_free);
+  if (status != 0) {
+    rrd_set_error ("rrdc_info: out of memory");
+    return (NULL);
+  }
+
+  mutex_lock (&lock);
+  file_path = get_path (filename);
+  if (file_path == NULL)
+  {
+    mutex_unlock (&lock);
+    return (NULL);
+  }
+
+  status = buffer_add_string (file_path, &buffer_ptr, &buffer_free);
+  free (file_path);
+
+  if (status != 0)
+  {
+    mutex_unlock (&lock);
+    rrd_set_error ("rrdc_info: out of memory");
+    return (NULL);
+  }
+
+  assert (buffer_free < sizeof (buffer));
+  buffer_size = sizeof (buffer) - buffer_free;
+  assert (buffer[buffer_size - 1] == ' ');
+  buffer[buffer_size - 1] = '\n';
+
+  res = NULL;
+  status = request (buffer, buffer_size, &res);
+  mutex_unlock (&lock);
+
+  if (status != 0) {
+    rrd_set_error ("rrdcached: %s", res->message);
+    return (NULL);
+  }
+  data = cd = NULL;
+  for( l=0 ; l < res->lines_num ; l++ ) {
+    /* first extract the keyword */
+	for(k = s = res->lines[l];s && *s;s++) {
+      if(*s == ' ') { *s = 0; s++; break; }
+	}
+    if(!s || !*s) break;
+	itype = (rrd_info_type_t)atoi(s); /* extract type code */
+	for(;*s;s++) { if(*s == ' ') { *s = 0; s++; break; } }
+    if(!*s) break;
+    /* finally, we're pointing to the value */
+    switch(itype) {
+    case RD_I_VAL:
+        if(*s == 'N') { info.u_val = DNAN; } else { info.u_val = atof(s); }
+        break;
+    case RD_I_CNT:
+        info.u_cnt = atol(s);
+        break;
+    case RD_I_INT:
+        info.u_int = atoi(s);
+        break;
+    case RD_I_STR:
+        chomp(s);
+        info.u_str = strdup(s);
+        break;
+    case RD_I_BLO:
+        rrd_set_error ("rrdc_info: BLOB objects are not supported");
+        return (NULL);
+    default:
+        rrd_set_error ("rrdc_info: Unsupported info type %d",itype);
+        return (NULL);
+    }
+
+    cd = rrd_info_push(cd, sprintf_alloc("%s",k), itype, info);
+	if(!data) data = cd;
+  }
+  response_free (res);
+
+  return (data);
+} /* }}} int rrdc_info */
+
+time_t rrdc_last (const char *filename) /* {{{ */
+{
+  char buffer[RRD_CMD_MAX];
+  char *buffer_ptr;
+  size_t buffer_free;
+  size_t buffer_size;
+  rrdc_response_t *res;
+  int status;
+  char *file_path;
+  time_t lastup;
+
+  if (filename == NULL) {
+    rrd_set_error ("rrdc_last: no filename");
+    return (-1);
+  }
+
+  memset (buffer, 0, sizeof (buffer));
+  buffer_ptr = &buffer[0];
+  buffer_free = sizeof (buffer);
+
+  status = buffer_add_string ("last", &buffer_ptr, &buffer_free);
+  if (status != 0) {
+    rrd_set_error ("rrdc_last: out of memory");
+    return (-1);
+  }
+
+  mutex_lock (&lock);
+  file_path = get_path (filename);
+  if (file_path == NULL)
+  {
+    mutex_unlock (&lock);
+    return (-1);
+  }
+
+  status = buffer_add_string (file_path, &buffer_ptr, &buffer_free);
+  free (file_path);
+
+  if (status != 0)
+  {
+    mutex_unlock (&lock);
+    rrd_set_error ("rrdc_last: out of memory");
+    return (-1);
+  }
+
+  assert (buffer_free < sizeof (buffer));
+  buffer_size = sizeof (buffer) - buffer_free;
+  assert (buffer[buffer_size - 1] == ' ');
+  buffer[buffer_size - 1] = '\n';
+
+  res = NULL;
+  status = request (buffer, buffer_size, &res);
+  mutex_unlock (&lock);
+
+  if (status != 0) {
+    rrd_set_error ("rrdcached: %s", res->message);
+    return (-1);
+  }
+  lastup = atol(res->message);
+  response_free (res);
+
+  return (lastup);
+} /* }}} int rrdc_last */
+
+time_t rrdc_first (const char *filename, int rraindex) /* {{{ */
+{
+  char buffer[RRD_CMD_MAX];
+  char *buffer_ptr;
+  size_t buffer_free;
+  size_t buffer_size;
+  rrdc_response_t *res;
+  int status;
+  char *file_path;
+  time_t firstup;
+
+  if (filename == NULL) {
+    rrd_set_error ("rrdc_first: no filename specified");
+    return (-1);
+  }
+
+  memset (buffer, 0, sizeof (buffer));
+  buffer_ptr = &buffer[0];
+  buffer_free = sizeof (buffer);
+
+  status = buffer_add_string ("first", &buffer_ptr, &buffer_free);
+  if (status != 0) {
+    rrd_set_error ("rrdc_first: out of memory");
+    return (-1);
+  }
+
+  mutex_lock (&lock);
+  file_path = get_path (filename);
+  if (file_path == NULL)
+  {
+    mutex_unlock (&lock);
+    return (-1);
+  }
+
+  status = buffer_add_string (file_path, &buffer_ptr, &buffer_free);
+  free(file_path);
+
+  if (status != 0)
+  {
+    mutex_unlock (&lock);
+    rrd_set_error ("rrdc_first: out of memory");
+    return (-1);
+  }
+  status = buffer_add_ulong (rraindex, &buffer_ptr, &buffer_free);
+  if (status != 0)
+  {
+    mutex_unlock (&lock);
+    rrd_set_error ("rrdc_first: out of memory");
+    return (-1);
+  }
+
+  assert (buffer_free < sizeof (buffer));
+  buffer_size = sizeof (buffer) - buffer_free;
+  assert (buffer[buffer_size - 1] == ' ');
+  buffer[buffer_size - 1] = '\n';
+
+  res = NULL;
+  status = request (buffer, buffer_size, &res);
+  mutex_unlock (&lock);
+
+  if (status != 0) {
+    rrd_set_error ("rrdcached: %s", res->message);
+    return (-1);
+  }
+  firstup = atol(res->message);
+  response_free (res);
+
+  return (firstup);
+} /* }}} int rrdc_first */
+
+int rrdc_create (const char *filename, /* {{{ */
+    unsigned long pdp_step,
+    time_t last_up,
+    int no_overwrite,
+    int argc,
+    const char **argv)
+{
+    return rrdc_create_r2(filename, pdp_step, last_up, no_overwrite, NULL, NULL, argc, argv);
+}
+
+int rrdc_create_r2(const char *filename, /* {{{ */
+    unsigned long pdp_step,
+    time_t last_up,
+    int no_overwrite,
+    const char **sources,
+    const char *template,
+    int argc,
+    const char **argv)
+{
+  char buffer[RRD_CMD_MAX];
+  char *buffer_ptr;
+  size_t buffer_free;
+  size_t buffer_size;
+  rrdc_response_t *res;
+  int status;
+  char *file_path;
+  int i;
+
+  if (filename == NULL) {
+    rrd_set_error ("rrdc_create: no filename specified");
+    return (-1);
+  }
+
+  memset (buffer, 0, sizeof (buffer));
+  buffer_ptr = &buffer[0];
+  buffer_free = sizeof (buffer);
+
+  status = buffer_add_string ("create", &buffer_ptr, &buffer_free);
+  if (status != 0) {
+    rrd_set_error ("rrdc_create: out of memory");
+    return (-1);
+  }
+
+  mutex_lock (&lock);
+  file_path = get_path (filename);
+  if (file_path == NULL)
+  {
+    mutex_unlock (&lock);
+    return (-1);
+  }
+
+  status = buffer_add_string (file_path, &buffer_ptr, &buffer_free);
+  free (file_path);
+
+  if (last_up >= 0) {
+    status = buffer_add_string ("-b", &buffer_ptr, &buffer_free);
+    status = buffer_add_ulong (last_up, &buffer_ptr, &buffer_free);
+  }
+  status = buffer_add_string ("-s", &buffer_ptr, &buffer_free);
+  status = buffer_add_ulong (pdp_step, &buffer_ptr, &buffer_free);
+  if(no_overwrite) {
+    status = buffer_add_string ("-O", &buffer_ptr, &buffer_free);
+  }
+
+  if (sources != NULL) {
+    for (const char **p = sources ; *p ; p++) {
+      status = buffer_add_string ("-r", &buffer_ptr, &buffer_free);
+      status = buffer_add_string (*p, &buffer_ptr, &buffer_free);
+    }
+  }
+
+  if (template != NULL) {
+    status = buffer_add_string ("-t", &buffer_ptr, &buffer_free);
+    status = buffer_add_string (template, &buffer_ptr, &buffer_free);
+  }
+
+  if (status != 0)
+  {
+    mutex_unlock (&lock);
+    rrd_set_error ("rrdc_create: out of memory");
+    return (-1);
+  }
+
+  for( i=0; i<argc; i++ ) {
+    if( argv[i] ) {
+      status = buffer_add_string (argv[i], &buffer_ptr, &buffer_free);
+      if (status != 0)
+      {
+        mutex_unlock (&lock);
+        rrd_set_error ("rrdc_create: out of memory");
+        return (-1);
+      }
+    }
+  }
+
+  /* buffer ready to send? */
+  assert (buffer_free < sizeof (buffer));
+  buffer_size = sizeof (buffer) - buffer_free;
+  assert (buffer[buffer_size - 1] == ' ');
+  buffer[buffer_size - 1] = '\n';
+
+  res = NULL;
+  status = request (buffer, buffer_size, &res);
+  mutex_unlock (&lock);
+
+  if (status != 0) {
+    rrd_set_error ("rrdcached: %s", res->message);
+    return (-1);
+  }
+  response_free (res);
+  return(0);
+} /* }}} int rrdc_create */
+
+int rrdc_fetch (const char *filename, /* {{{ */
+    const char *cf,
+    time_t *ret_start, time_t *ret_end,
+    unsigned long *ret_step,
+    unsigned long *ret_ds_num,
+    char ***ret_ds_names,
+    rrd_value_t **ret_data)
+{
+  char buffer[RRD_CMD_MAX];
+  char *buffer_ptr;
+  size_t buffer_free;
+  size_t buffer_size;
+  rrdc_response_t *res;
+  char *file_path;
+
+  char *str_tmp;
+  unsigned long flush_version;
+
+  time_t start;
+  time_t end;
+  unsigned long step;
+  unsigned long ds_num;
+  char **ds_names;
+
+  rrd_value_t *data;
+  size_t data_size;
+  size_t data_fill;
+
+  int status;
+  size_t current_line;
+  time_t t;
+
+  if ((filename == NULL) || (cf == NULL))
+    return (-1);
+
+  mutex_lock(&lock);
+
+  /* Send request {{{ */
+
+  memset (buffer, 0, sizeof (buffer));
+  buffer_ptr = &buffer[0];
+  buffer_free = sizeof (buffer);
+  status = buffer_add_string ("FETCH", &buffer_ptr, &buffer_free);
+  if (status != 0){
+      mutex_unlock(&lock);
+      return (ENOBUFS);
+  }
+
+  /* change to path for rrdcached */
+  file_path = get_path (filename);
+  if (file_path == NULL){
+    mutex_unlock(&lock);
+    return (EINVAL);
+  }
+
+  status = buffer_add_string (file_path, &buffer_ptr, &buffer_free);
+  free (file_path);
+
+  if (status != 0)
+    return (ENOBUFS);
+
+  status = buffer_add_string (cf, &buffer_ptr, &buffer_free);
+  if (status != 0)
+    return (ENOBUFS);
+
+  if ((ret_start != NULL) && (*ret_start > 0))
+  {
+    char tmp[64];
+    snprintf (tmp, sizeof (tmp), "%lu", (unsigned long) *ret_start);
+    tmp[sizeof (tmp) - 1] = 0;
+    status = buffer_add_string (tmp, &buffer_ptr, &buffer_free);
+    if (status != 0)
+      return (ENOBUFS);
+
+    if ((ret_end != NULL) && (*ret_end > 0))
+    {
+      snprintf (tmp, sizeof (tmp), "%lu", (unsigned long) *ret_end);
+      tmp[sizeof (tmp) - 1] = 0;
+      status = buffer_add_string (tmp, &buffer_ptr, &buffer_free);
+      if (status != 0){
+        mutex_unlock(&lock);
+        return (ENOBUFS);
+      }
+    }
+  }
+
+  assert (buffer_free < sizeof (buffer));
+  buffer_size = sizeof (buffer) - buffer_free;
+  assert (buffer[buffer_size - 1] == ' ');
+  buffer[buffer_size - 1] = '\n';
+
+  res = NULL;
+  status = request (buffer, buffer_size, &res);
+  if (status != 0){
+    mutex_unlock(&lock);
+    return (status);
+  }
+  status = res->status;
+  if (status < 0)
+  {
+    rrd_set_error ("rrdcached: %s", res->message);
+    response_free (res);
+    mutex_unlock(&lock);
+    return (status);
+  }
+  /* }}} Send request */
+
+  ds_names = NULL;
+  ds_num = 0;
+  data = NULL;
+  current_line = 0;
+
+  /* Macros to make error handling a little easier (i. e. less to type and
+   * read. `BAIL_OUT' sets the error message, frees all dynamically allocated
+   * variables and returns the provided status code. */
+#define BAIL_OUT(status, ...) do { \
+    rrd_set_error ("rrdc_fetch: " __VA_ARGS__); \
+    free (data); \
+    if (ds_names != 0) { size_t k; for (k = 0; k < ds_num; k++) free (ds_names[k]); } \
+    free (ds_names); \
+    response_free (res); \
+    mutex_unlock(&lock); \
+    return (status); \
+  } while (0)
+
+#define READ_NUMERIC_FIELD(name,type,var) do { \
+    char *key; \
+    unsigned long value; \
+    assert (current_line < res->lines_num); \
+    status = parse_ulong_header (res->lines[current_line], &key, &value); \
+    if (status != 0) \
+      BAIL_OUT (-1, "Unable to parse header `%s'", name); \
+    if (strcasecmp (key, name) != 0) \
+      BAIL_OUT (-1, "Unexpected header line: Expected `%s', got `%s'", name, key); \
+    var = (type) value; \
+    current_line++; \
+  } while (0)
+
+  if (res->lines_num < 1)
+    BAIL_OUT (-1, "Premature end of response packet");
+
+  /* We're making some very strong assumptions about the fields below. We
+   * therefore check the version of the `flush' command first, so that later
+   * versions can change the order of fields and it's easier to implement
+   * backwards compatibility. */
+  READ_NUMERIC_FIELD ("FlushVersion", unsigned long, flush_version);
+  if (flush_version != 1)
+    BAIL_OUT (-1, "Don't know how to handle flush format version %lu.",
+        flush_version);
+
+  if (res->lines_num < 5)
+    BAIL_OUT (-1, "Premature end of response packet");
+
+  READ_NUMERIC_FIELD ("Start", time_t, start);
+  READ_NUMERIC_FIELD ("End", time_t, end);
+  if (start >= end)
+    BAIL_OUT (-1, "Malformed start and end times: start = %lu; end = %lu;",
+        (unsigned long) start,
+        (unsigned long) end);
+
+  READ_NUMERIC_FIELD ("Step", unsigned long, step);
+  if (step < 1)
+    BAIL_OUT (-1, "Invalid number for Step: %lu", step);
+
+  READ_NUMERIC_FIELD ("DSCount", unsigned long, ds_num);
+  if (ds_num < 1)
+    BAIL_OUT (-1, "Invalid number for DSCount: %lu", ds_num);
+
+  /* It's time to allocate some memory */
+  ds_names = (char **)calloc ((size_t) ds_num, sizeof (*ds_names));
+  if (ds_names == NULL)
+    BAIL_OUT (-1, "Out of memory");
+
+  status = parse_char_array_header (res->lines[current_line],
+      &str_tmp, ds_names, (size_t) ds_num, /* alloc = */ 1);
+  if (status != 0)
+    BAIL_OUT (-1, "Unable to parse header `DSName'");
+  if (strcasecmp ("DSName", str_tmp) != 0)
+    BAIL_OUT (-1, "Unexpected header line: Expected `DSName', got `%s'", str_tmp);
+  current_line++;
+
+  data_size = ds_num * (end - start) / step;
+  if (data_size < 1)
+    BAIL_OUT (-1, "No data returned or headers invalid.");
+
+  if (res->lines_num != (6 + (data_size / ds_num)))
+    BAIL_OUT (-1, "Got %zu lines, expected %zu",
+        res->lines_num, (6 + (data_size / ds_num)));
+
+  data = (rrd_value_t *)calloc (data_size, sizeof (*data));
+  if (data == NULL)
+    BAIL_OUT (-1, "Out of memory");
+
+
+  data_fill = 0;
+  for (t = start + step; t <= end; t += step, current_line++)
+  {
+    time_t tmp;
+
+    assert (current_line < res->lines_num);
+
+    status = parse_value_array_header (res->lines[current_line],
+        &tmp, data + data_fill, (size_t) ds_num);
+    if (status != 0)
+      BAIL_OUT (-1, "Cannot parse value line");
+
+    data_fill += (size_t) ds_num;
+  }
+
+  *ret_start = start;
+  *ret_end = end;
+  *ret_step = step;
+  *ret_ds_num = ds_num;
+  *ret_ds_names = ds_names;
+  *ret_data = data;
+
+  response_free (res);
+  mutex_unlock(&lock);
+  return (0);
+#undef READ_NUMERIC_FIELD
+#undef BAIL_OUT
+} /* }}} int rrdc_flush */
 
 /* convenience function; if there is a daemon specified, or if we can
  * detect one from the environment, then flush the file.  Otherwise, no-op
@@ -745,9 +1640,9 @@ int rrdc_stats_get (rrdc_stats_t **ret_stats) /* {{{ */
    * }}} */
 
   res = NULL;
-  pthread_mutex_lock (&lock);
+  mutex_lock (&lock);
   status = request ("STATS\n", strlen ("STATS\n"), &res);
-  pthread_mutex_unlock (&lock);
+  mutex_unlock (&lock);
 
   if (status != 0)
     return (status);
@@ -790,7 +1685,8 @@ int rrdc_stats_get (rrdc_stats_t **ret_stats) /* {{{ */
         || (strcmp ("TreeNodesNumber", key) == 0))
     {
       s->type = RRDC_STATS_TYPE_GAUGE;
-      s->value.gauge = strtod (value, &endptr);
+      rrd_strtodbl(value, &endptr, &(s->value.gauge),
+                                    "QueueLength or TreeDepth or TreeNodesNumber");
     }
     else if ((strcmp ("DataSetsWritten", key) == 0)
         || (strcmp ("FlushesReceived", key) == 0)
@@ -809,7 +1705,7 @@ int rrdc_stats_get (rrdc_stats_t **ret_stats) /* {{{ */
     }
 
     /* Conversion failed */
-    if (endptr == value)
+    if ( (endptr == value) || (endptr[0] != '\0') )
     {
       free (s);
       continue;
@@ -843,23 +1739,23 @@ int rrdc_stats_get (rrdc_stats_t **ret_stats) /* {{{ */
 
 void rrdc_stats_free (rrdc_stats_t *ret_stats) /* {{{ */
 {
-  rrdc_stats_t *this;
+  rrdc_stats_t *stats;
 
-  this = ret_stats;
-  while (this != NULL)
+  stats = ret_stats;
+  while (stats != NULL)
   {
     rrdc_stats_t *next;
 
-    next = this->next;
+    next = stats->next;
 
-    if (this->name != NULL)
+    if (stats->name != NULL)
     {
-      free ((char *)this->name);
-      this->name = NULL;
+      free ((char *)stats->name);
+      stats->name = NULL;
     }
-    free (this);
+    free (stats);
 
-    this = next;
+    stats = next;
   } /* while (this != NULL) */
 } /* }}} void rrdc_stats_free */
 

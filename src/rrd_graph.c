@@ -1,5 +1,5 @@
 /****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  ****************************************************************************
  * rrd__graph.c  produce graphs from data in rrdfiles
  ****************************************************************************/
@@ -7,11 +7,28 @@
 
 #include <sys/stat.h>
 
+
+
 #ifdef WIN32
 #include "strftime.h"
 #endif
 
+#include "rrd_strtod.h"
+
 #include "rrd_tool.h"
+#include "unused.h"
+
+
+#ifdef HAVE_G_REGEX_NEW
+#include <glib.h>
+#else
+#ifdef HAVE_PCRE_COMPILE
+#include <pcre.h>
+#else
+#error "you must have either glib with regexp support or libpcre"
+#endif
+#endif
+
 
 /* for basename */
 #ifdef HAVE_LIBGEN_H
@@ -59,50 +76,98 @@ text_prop_t text_prop[] = {
     {5.5, RRD_DEFAULT_FONT,NULL} /* watermark */
 };
 
+char week_fmt[128] = "Week %V";
+
+/*
+    0 double    minsec;   --  minimum sec per pix
+    1 long      length;   -- number of secs on the image
+    2 enum tmt_en gridtm; -- grid interval in what ?
+    3 long      gridst;   -- how many whats per grid
+    4 enum tmt_en mgridtm; -- label interval in what ?
+    5 long      mgridst;  -- how many whats per label
+    6 enum tmt_en labtm;  -- label interval in what ?
+    7 long      labst;    -- how many whats per label
+    8 long      precis;   -- label precision -> label placement
+    9 char     *stst;     -- strftime string
+*/
+
 xlab_t    xlab[] = {
-    {0, 0, TMT_SECOND, 30, TMT_MINUTE, 5, TMT_MINUTE, 5, 0, "%H:%M"}
+    /* 0  1    2          3    4         5   6          7  8   9  */
+    {0.0, 0, TMT_SECOND, 1, TMT_SECOND, 5, TMT_SECOND, 1, 0, "%H:%M:%S"}
     ,
-    {2, 0, TMT_MINUTE, 1, TMT_MINUTE, 5, TMT_MINUTE, 5, 0, "%H:%M"}
+    {0.015, 0, TMT_SECOND, 1, TMT_SECOND, 5, TMT_SECOND, 5, 0, "%H:%M:%S"}
     ,
-    {5, 0, TMT_MINUTE, 2, TMT_MINUTE, 10, TMT_MINUTE, 10, 0, "%H:%M"}
+    {0.08, 0, TMT_SECOND, 1, TMT_SECOND, 5, TMT_SECOND, 10, 0, "%H:%M:%S"}
     ,
-    {10, 0, TMT_MINUTE, 5, TMT_MINUTE, 20, TMT_MINUTE, 20, 0, "%H:%M"}
+    {0.15, 0, TMT_SECOND, 5, TMT_SECOND, 15, TMT_SECOND, 30, 0, "%H:%M:%S"}
     ,
-    {30, 0, TMT_MINUTE, 10, TMT_HOUR, 1, TMT_HOUR, 1, 0, "%H:%M"}
+    {0.4, 0, TMT_SECOND, 10, TMT_MINUTE, 1, TMT_MINUTE, 1, 0, "%H:%M"}
     ,
-    {60, 0, TMT_MINUTE, 30, TMT_HOUR, 2, TMT_HOUR, 2, 0, "%H:%M"}
+    {0.7, 0, TMT_SECOND, 20, TMT_MINUTE, 1, TMT_MINUTE, 1, 0, "%H:%M"}
     ,
-    {60, 24 * 3600, TMT_MINUTE, 30, TMT_HOUR, 2, TMT_HOUR, 6, 0, "%a %H:%M"}
+    {1.0, 0, TMT_SECOND, 30, TMT_MINUTE, 1, TMT_MINUTE, 2, 0, "%H:%M"}
     ,
-    {180, 0, TMT_HOUR, 1, TMT_HOUR, 6, TMT_HOUR, 6, 0, "%H:%M"}
+    {2.0, 0, TMT_MINUTE, 1, TMT_MINUTE, 5, TMT_MINUTE, 5, 0, "%H:%M"}
     ,
-    {180, 24 * 3600, TMT_HOUR, 1, TMT_HOUR, 6, TMT_HOUR, 12, 0, "%a %H:%M"}
+    {5.0, 0, TMT_MINUTE, 2, TMT_MINUTE, 10, TMT_MINUTE, 10, 0, "%H:%M"}
     ,
-    /*{300,             0,   TMT_HOUR,3,    TMT_HOUR,12,   TMT_HOUR,12,    12*3600,"%a %p"},  this looks silly */
-    {600, 0, TMT_HOUR, 6, TMT_DAY, 1, TMT_DAY, 1, 24 * 3600, "%a"}
+    {10.0, 0, TMT_MINUTE, 5, TMT_MINUTE, 20, TMT_MINUTE, 20, 0, "%H:%M"}
     ,
-    {1200, 0, TMT_HOUR, 6, TMT_DAY, 1, TMT_DAY, 1, 24 * 3600, "%d"}
+    {30.0, 0, TMT_MINUTE, 10, TMT_MINUTE, 30, TMT_HOUR, 1, 0, "%H:%M"}
     ,
-    {1800, 0, TMT_HOUR, 12, TMT_DAY, 1, TMT_DAY, 2, 24 * 3600, "%a %d"}
+    {60.0, 0, TMT_MINUTE, 30, TMT_HOUR, 1, TMT_HOUR, 2, 0, "%H:%M"}
     ,
-    {2400, 0, TMT_HOUR, 12, TMT_DAY, 1, TMT_DAY, 2, 24 * 3600, "%a"}
+    {60.0, 24 * 3600, TMT_MINUTE, 30, TMT_HOUR, 1, TMT_HOUR, 3, 0, "%a %H:%M"}
     ,
-    {3600, 0, TMT_DAY, 1, TMT_WEEK, 1, TMT_WEEK, 1, 7 * 24 * 3600, "Week %V"}
+    {140.0, 0, TMT_HOUR, 1, TMT_HOUR, 2, TMT_HOUR, 4, 0, "%a %H:%M"}
     ,
-    {3 * 3600, 0, TMT_WEEK, 1, TMT_MONTH, 1, TMT_WEEK, 2, 7 * 24 * 3600, "Week %V"}
+    {180.0, 0, TMT_HOUR, 1, TMT_HOUR, 3, TMT_HOUR, 6, 0, "%a %H:%M"}
     ,
-    {6 * 3600, 0, TMT_MONTH, 1, TMT_MONTH, 1, TMT_MONTH, 1, 30 * 24 * 3600,
-     "%b"}
+    {300.0, 0, TMT_HOUR, 2,  TMT_HOUR,6,   TMT_HOUR,12, 0, "%a %H:%M"}
     ,
-    {48 * 3600, 0, TMT_MONTH, 1, TMT_MONTH, 3, TMT_MONTH, 3, 30 * 24 * 3600,
-     "%b"}
+    {600.0, 0, TMT_HOUR, 6, TMT_DAY, 1, TMT_DAY, 1, 24 * 3600, "%a %d %b"}
     ,
-    {315360, 0, TMT_MONTH, 3, TMT_YEAR, 1, TMT_YEAR, 1, 365 * 24 * 3600, "%Y"}
+    {1200.0, 0, TMT_HOUR, 6, TMT_DAY, 1, TMT_DAY, 1, 24 * 3600, "%d %b"}
     ,
-    {10 * 24 * 3600, 0, TMT_YEAR, 1, TMT_YEAR, 1, TMT_YEAR, 1,
-     365 * 24 * 3600, "%y"}
+    {1800.0, 0, TMT_HOUR, 12, TMT_DAY, 1, TMT_DAY, 2, 24 * 3600, "%a %d %b"}
     ,
-    {-1, 0, TMT_MONTH, 0, TMT_MONTH, 0, TMT_MONTH, 0, 0, ""}
+    {2400.0, 0, TMT_HOUR, 12, TMT_DAY, 1, TMT_DAY, 2, 24 * 3600, "%d %b"}
+    ,
+    {3600.0, 0, TMT_DAY, 1, TMT_WEEK, 1, TMT_WEEK, 1, 7 * 24 * 3600, week_fmt }
+    ,
+    {12000.0 , 0, TMT_DAY, 1, TMT_MONTH, 1, TMT_MONTH, 1, 30 * 24 * 3600,    "%B %Y"}
+    ,
+    {18000.0 , 0, TMT_DAY, 2, TMT_MONTH, 1, TMT_MONTH, 1, 30 * 24 * 3600,    "%B %Y"}
+    ,
+    {23000.0 , 0, TMT_WEEK, 1, TMT_MONTH, 1, TMT_MONTH, 1, 30 * 24 * 3600,    "%b %Y"}
+    ,
+    {32000.0 , 0, TMT_WEEK, 1, TMT_MONTH, 1, TMT_MONTH, 1, 30 * 24 * 3600,    "%b '%g"}
+    ,
+    {42000.0 , 0, TMT_WEEK, 1, TMT_MONTH, 1, TMT_MONTH, 2, 30 * 24 * 3600,    "%B %Y"}
+    ,
+    {52000.0 , 0, TMT_WEEK, 1, TMT_MONTH, 1, TMT_MONTH, 2, 30 * 24 * 3600,    "%b %Y"}
+    ,
+    {78000.0 , 0, TMT_WEEK, 1, TMT_MONTH, 1, TMT_MONTH, 2, 30 * 24 * 3600,    "%b '%g"}
+    ,
+    {84000.0 , 0, TMT_WEEK, 2, TMT_MONTH, 1, TMT_MONTH, 3, 30 * 24 * 3600,    "%B %Y"}
+    ,
+    {94000.0 , 0, TMT_WEEK, 2, TMT_MONTH, 1, TMT_MONTH, 3, 30 * 24 * 3600,    "%b %Y"}
+    ,
+    {120000.0 , 0, TMT_WEEK, 2, TMT_MONTH, 1, TMT_MONTH, 3, 30 * 24 * 3600,    "%b '%g"}
+    ,
+    {130000.0 , 0, TMT_MONTH, 1, TMT_MONTH, 2, TMT_MONTH, 4, 0,    "%Y-%m-%d"}
+    ,
+    {142000.0 , 0, TMT_MONTH, 1, TMT_MONTH, 3, TMT_MONTH, 6, 0,    "%Y-%m-%d"}
+    ,
+    {220000.0 , 0, TMT_MONTH, 1, TMT_MONTH, 6, TMT_MONTH, 12, 0,    "%Y-%m-%d"}
+    ,
+    {400000.0 , 0, TMT_MONTH, 2, TMT_MONTH, 12, TMT_MONTH, 12, 365*24*3600,    "%Y"}
+    ,
+    {800000.0 , 0, TMT_MONTH, 4, TMT_MONTH, 12, TMT_MONTH, 24, 365*24*3600,    "%Y"}
+    ,
+    {2000000.0 , 0, TMT_MONTH, 6, TMT_MONTH, 12, TMT_MONTH, 24, 365*24*3600,    "'%g"}
+    ,
+    {-1.0, 0, TMT_MONTH, 0, TMT_MONTH, 0, TMT_MONTH, 0, 0, ""}
 };
 
 /* sensible y label intervals ...*/
@@ -162,6 +227,10 @@ gfx_color_t graph_col[] =   /* default colors */
     {0.12, 0.12, 0.12, 1.00},   /* axis       */
     {0.00, 0.00, 0.00, 1.00}    /* frame      */
 };
+
+const char default_timestamp_fmt[] = "%Y-%m-%d %H:%M:%S";
+
+const char default_duration_fmt[] = "%H:%02m:%02s";
 
 
 /* #define DEBUG */
@@ -223,7 +292,7 @@ double ytr(
    if (strcmp(#VV, string) == 0) return VVV ;
 
 enum gf_en gf_conv(
-    char *string)
+    const char *string)
 {
 
     conv_if(PRINT, GF_PRINT);
@@ -246,19 +315,40 @@ enum gf_en gf_conv(
 }
 
 enum gfx_if_en if_conv(
-    char *string)
+    const char *string)
 {
 
     conv_if(PNG, IF_PNG);
+#ifdef CAIRO_HAS_SVG_SURFACE
     conv_if(SVG, IF_SVG);
+#endif
+#ifdef CAIRO_HAS_PS_SURFACE
     conv_if(EPS, IF_EPS);
+#endif
+#ifdef CAIRO_HAS_PDF_SURFACE
     conv_if(PDF, IF_PDF);
+#endif
+    conv_if(XML, IF_XML);
+    conv_if(XMLENUM, IF_XMLENUM);
+    conv_if(CSV, IF_CSV);
+    conv_if(TSV, IF_TSV);
+    conv_if(SSV, IF_SSV);
+    conv_if(JSON, IF_JSON);
+    conv_if(JSONTIME, IF_JSONTIME);
 
     return (enum gfx_if_en)(-1);
 }
 
+enum gfx_type_en type_conv(
+    const char *string)
+{
+    conv_if(TIME , GTYPE_TIME);
+    conv_if(XY, GTYPE_XY);
+    return (enum gfx_type_en)(-1);
+}
+
 enum tmt_en tmt_conv(
-    char *string)
+    const char *string)
 {
 
     conv_if(SECOND, TMT_SECOND);
@@ -272,7 +362,7 @@ enum tmt_en tmt_conv(
 }
 
 enum grc_en grc_conv(
-    char *string)
+    const char *string)
 {
 
     conv_if(BACK, GRC_BACK);
@@ -290,7 +380,7 @@ enum grc_en grc_conv(
 }
 
 enum text_prop_en text_prop_conv(
-    char *string)
+    const char *string)
 {
 
     conv_if(DEFAULT, TEXT_PROP_DEFAULT);
@@ -314,16 +404,19 @@ int im_free(
     if (im == NULL)
         return 0;
 
+    free(im->graphfile);
+
     if (im->daemon_addr != NULL)
       free(im->daemon_addr);
 
     if (im->gdef_map){
-        g_hash_table_destroy(im->gdef_map);        
-    }
+        g_hash_table_destroy(im->gdef_map);
+	}
 
-    if (im->rrd_map){
-        g_hash_table_destroy(im->rrd_map);        
-    }
+	if (im->rrd_map){
+		g_hash_table_destroy(im->rrd_map);
+	}
+
 
     for (i = 0; i < (unsigned) im->gdes_c; i++) {
         if (im->gdes[i].data_first) {
@@ -352,26 +445,43 @@ int im_free(
     if (im->font_options)
         cairo_font_options_destroy(im->font_options);
 
+    if (im->surface)
+        cairo_surface_destroy(im->surface);
+
     if (im->cr) {
         status = cairo_status(im->cr);
         cairo_destroy(im->cr);
     }
+
+    if (status)
+        fprintf(stderr, "OOPS: Cairo has issues it can't even die: %s\n",
+                cairo_status_to_string(status));
 
 
     if (im->rendered_image) {
         free(im->rendered_image);
     }
 
+    mutex_lock(im->fontmap_mutex);
     if (im->layout) {
-        g_object_unref (im->layout);
+        g_object_unref(im->layout);
     }
+    mutex_unlock(im->fontmap_mutex);
 
-    if (im->surface)
-        cairo_surface_destroy(im->surface);
-
-    if (status)
-        fprintf(stderr, "OOPS: Cairo has issues it can't even die: %s\n",
-                cairo_status_to_string(status));
+	if (im->ylegend)
+		free(im->ylegend);
+	if (im->title)
+		free(im->title);
+	if (im->watermark)
+		free(im->watermark);
+	if (im->xlab_form)
+		free(im->xlab_form);
+	if (im->second_axis_legend)
+		free(im->second_axis_legend);
+	if (im->second_axis_format)
+		free(im->second_axis_format);
+	if (im->primary_axis_format)
+		free(im->primary_axis_format);
 
     return 0;
 }
@@ -649,7 +759,7 @@ void apply_gridfit(
 
 /* reduce data reimplementation by Alex */
 
-void reduce_data(
+int reduce_data(
     enum cf_en cf,      /* which consolidation function ? */
     unsigned long cur_step, /* step the data currently is in */
     time_t *start,      /* start, end and step as requested ... */
@@ -731,10 +841,8 @@ void reduce_data(
 /* if this gets triggered, something is REALLY WRONG ... we die immediately */
 
     if (row_cnt % reduce_factor) {
-        printf("SANITY CHECK: %lu rows cannot be reduced by %i \n",
-               row_cnt, reduce_factor);
-        printf("BUG in reduce_data()\n");
-        exit(1);
+        rrd_set_error("SANITY CHECK: %lu rows cannot be reduced by %i \n",  row_cnt, reduce_factor);
+        return 0;
     }
 
     /* Now combine reduce_factor intervals at a time
@@ -819,6 +927,7 @@ void reduce_data(
         printf("\n");
     }
 #endif
+    return 1;
 }
 
 
@@ -829,7 +938,6 @@ int data_fetch(
     image_desc_t *im)
 {
     int       i, ii;
-
     /* pull the data from the rrd files ... */
     for (i = 0; i < (int) im->gdes_c; i++) {
         /* only GF_DEF elements fetch data */
@@ -852,60 +960,87 @@ int data_fetch(
             im->gdes[i].data_first = 0;
         } else {
             unsigned long ft_step = im->gdes[i].step;   /* ft_step will record what we got from fetch */
+            const char *rrd_daemon;
+            int status;
 
-            /* Flush the file if
-             * - a connection to the daemon has been established
-             * - this is the first occurrence of that RRD file
-             */
-            if (rrdc_is_connected(im->daemon_addr))
+            if (im->gdes[i].daemon[0] != 0)
+                rrd_daemon = im->gdes[i].daemon;
+            else
+                rrd_daemon = im->daemon_addr;
+
+            /* "daemon" may be NULL. ENV_RRDCACHED_ADDRESS is evaluated in that
+             * case. If "daemon" holds the same value as in the previous
+             * iteration, no actual new connection is established - the
+             * existing connection is re-used. */
+            rrdc_connect (rrd_daemon);
+
+            /* If connecting was successfull, use the daemon to query the data.
+             * If there is no connection, for example because no daemon address
+             * was specified, (try to) use the local file directly. */
+            if (rrdc_is_connected (rrd_daemon))
             {
-                int status;
-
-                status = 0;
-                for (ii = 0; ii < i; ii++)
-                {
-                    if (strcmp (im->gdes[i].rrd, im->gdes[ii].rrd) == 0)
-                    {
-                        status = 1;
-                        break;
-                    }
+                status = rrdc_fetch (im->gdes[i].rrd,
+                        cf_to_string (im->gdes[i].cf),
+                        &im->gdes[i].start,
+                        &im->gdes[i].end,
+                        &ft_step,
+                        &im->gdes[i].ds_cnt,
+                        &im->gdes[i].ds_namv,
+                        &im->gdes[i].data);
+                if (status != 0) {
+                    if (im->extra_flags & ALLOW_MISSING_DS) {
+                        rrd_clear_error();
+                        if (rrd_fetch_empty(&im->gdes[i].start,
+                                            &im->gdes[i].end,
+                                            &ft_step,
+                                            &im->gdes[i].ds_cnt,
+                                            im->gdes[i].ds_nam,
+                                            &im->gdes[i].ds_namv,
+                                            &im->gdes[i].data) == -1)
+                            return -1;
+                    } else return (status);
                 }
-
-                if (status == 0)
-                {
-                    status = rrdc_flush (im->gdes[i].rrd);
-                    if (status != 0)
-                    {
-                        rrd_set_error ("rrdc_flush (%s) failed with status %i.",
-                                im->gdes[i].rrd, status);
-                        return (-1);
-                    }
+            }
+            else
+            {
+                if ((rrd_fetch_fn(im->gdes[i].rrd,
+                                im->gdes[i].cf,
+                                &im->gdes[i].start,
+                                &im->gdes[i].end,
+                                &ft_step,
+                                &im->gdes[i].ds_cnt,
+                                &im->gdes[i].ds_namv,
+                                &im->gdes[i].data)) == -1) {
+                    if (im->extra_flags & ALLOW_MISSING_DS) {
+                        /* Unable to fetch data, assume fake data */
+                        rrd_clear_error();
+                        if (rrd_fetch_empty(&im->gdes[i].start,
+                                            &im->gdes[i].end,
+                                            &ft_step,
+                                            &im->gdes[i].ds_cnt,
+                                            im->gdes[i].ds_nam,
+                                            &im->gdes[i].ds_namv,
+                                            &im->gdes[i].data) == -1)
+                            return -1;
+                    } else return -1;
                 }
-            } /* if (rrdc_is_connected()) */
-
-            if ((rrd_fetch_fn(im->gdes[i].rrd,
-                              im->gdes[i].cf,
-                              &im->gdes[i].start,
-                              &im->gdes[i].end,
-                              &ft_step,
-                              &im->gdes[i].ds_cnt,
-                              &im->gdes[i].ds_namv,
-                              &im->gdes[i].data)) == -1) {
-                return -1;
             }
             im->gdes[i].data_first = 1;
 
             /* must reduce to at least im->step
-               otherwhise we end up with more data than we can handle in the 
-               chart and visibility of data will be random */            
+               otherwise we end up with more data than we can handle in the
+               chart and visibility of data will be random */
             im->gdes[i].step = max(im->gdes[i].step,im->step);
             if (ft_step < im->gdes[i].step) {
-                reduce_data(im->gdes[i].cf_reduce,
+
+                if (!reduce_data(im->gdes[i].cf_reduce_set ? im->gdes[i].cf_reduce : im->gdes[i].cf,
                             ft_step,
                             &im->gdes[i].start,
                             &im->gdes[i].end,
                             &im->gdes[i].step,
-                            &im->gdes[i].ds_cnt, &im->gdes[i].data);
+                            &im->gdes[i].ds_cnt, &im->gdes[i].data)){
+                     return -1;
+                }
             } else {
                 im->gdes[i].step = ft_step;
             }
@@ -922,7 +1057,8 @@ int data_fetch(
                           im->gdes[i].ds_nam, im->gdes[i].rrd);
             return -1;
         }
-
+        // remember that we already got this one
+        g_hash_table_insert(im->rrd_map,gdes_fetch_key(im->gdes[i]),GINT_TO_POINTER(i));
     }
     return 0;
 }
@@ -933,29 +1069,6 @@ int data_fetch(
  * CDEF stuff
  *************************************************************/
 
-long find_var_wrapper(
-    void *arg1,
-    char *key)
-{
-    return find_var((image_desc_t *) arg1, key);
-}
-
-/* find gdes containing var*/
-long find_var(
-    image_desc_t *im,
-    char *key)
-{
-    long match = -1;
-    gpointer value;
-    gboolean ok = g_hash_table_lookup_extended(im->gdef_map,key,NULL,&value);
-    if (ok){
-        match = GPOINTER_TO_INT(value);
-    }
-
-    /* printf("%s -> %ld\n",key,match); */
-
-    return match;    
-}
 
 /* find the greatest common divisor for all the numbers
    in the 0 terminated num array */
@@ -977,6 +1090,7 @@ long lcd(
     return num[i];
 }
 
+
 /* run the rpn calculator on all the VDEF and CDEF arguments */
 int data_calc(
     image_desc_t *im)
@@ -988,6 +1102,7 @@ int data_calc(
     int       stepcnt;
     time_t    now;
     rpnstack_t rpnstack;
+    rpnp_t   *rpnp;
 
     rpnstack_init(&rpnstack);
 
@@ -1041,11 +1156,12 @@ int data_calc(
             steparray = NULL;
             stepcnt = 0;
             dataidx = -1;
+	    rpnp = im->gdes[gdi].rpnp;
 
             /* Find the variables in the expression.
              * - VDEF variables are substituted by their values
              *   and the opcode is changed into OP_NUMBER.
-             * - CDEF variables are analized for their step size,
+             * - CDEF variables are analyzed for their step size,
              *   the lowest common denominator of all the step
              *   sizes of the data sources involved is calculated
              *   and the resulting number is the step size for the
@@ -1139,6 +1255,7 @@ int data_calc(
              */
             im->gdes[gdi].step = lcd(steparray);
             free(steparray);
+
             if ((im->gdes[gdi].data = (rrd_value_t*)malloc(((im->gdes[gdi].end -
                                                im->gdes[gdi].start)
                                               / im->gdes[gdi].step)
@@ -1153,19 +1270,21 @@ int data_calc(
              */
             for (now = im->gdes[gdi].start + im->gdes[gdi].step;
                  now <= im->gdes[gdi].end; now += im->gdes[gdi].step) {
-                rpnp_t   *rpnp = im->gdes[gdi].rpnp;
 
                 /* 3rd arg of rpn_calc is for OP_VARIABLE lookups;
                  * in this case we are advancing by timesteps;
                  * we use the fact that time_t is a synonym for long
                  */
                 if (rpn_calc(rpnp, &rpnstack, (long) now,
-                             im->gdes[gdi].data, ++dataidx) == -1) {
+                             im->gdes[gdi].data, ++dataidx,im->gdes[gdi].step) == -1) {
                     /* rpn_calc sets the error string */
                     rpnstack_free(&rpnstack);
+		    rpnp_freeextra(rpnp);
                     return -1;
                 }
             }           /* enumerate over time steps within a CDEF */
+	    rpnp_freeextra(rpnp);
+
             break;
         default:
             continue;
@@ -1227,8 +1346,10 @@ int data_proc(
 
     /* memory for the processed data */
     for (i = 0; i < im->gdes_c; i++) {
-        if ((im->gdes[i].gf == GF_LINE) ||
-            (im->gdes[i].gf == GF_AREA) || (im->gdes[i].gf == GF_TICK)) {
+        if ((im->gdes[i].gf == GF_LINE)
+         || (im->gdes[i].gf == GF_AREA)
+         || (im->gdes[i].gf == GF_TICK)
+        ) {
             if ((im->gdes[i].p_data = (rrd_value_t*)malloc((im->xsize + 1)
                                              * sizeof(rrd_value_t))) == NULL) {
                 rrd_set_error("malloc data_proc");
@@ -1379,8 +1500,18 @@ static int find_first_weekday(void){
         first_weekday = nl_langinfo (_NL_TIME_FIRST_WEEKDAY)[0];
         int week_1stday;
         long week_1stday_l = (long) nl_langinfo (_NL_TIME_WEEK_1STDAY);
-        if (week_1stday_l == 19971130) week_1stday = 0; /* Sun */
-        else if (week_1stday_l == 19971201) week_1stday = 1; /* Mon */
+        if (week_1stday_l == 19971130
+#if SIZEOF_LONG_INT > 4
+            || week_1stday_l >> 32 == 19971130
+#endif
+           )
+            week_1stday = 0; /* Sun */
+        else if (week_1stday_l == 19971201
+#if SIZEOF_LONG_INT > 4
+           || week_1stday_l >> 32 == 19971201
+#endif
+           )
+            week_1stday = 1; /* Mon */
         else
         {
             first_weekday = 1;
@@ -1405,8 +1536,6 @@ time_t find_first_time(
     struct tm tm;
 
     localtime_r(&start, &tm);
-    /* let mktime figure this dst on its own */
-    tm.tm_isdst = -1;
 
     switch (baseint) {
     case TMT_SECOND:
@@ -1476,7 +1605,7 @@ time_t find_next_time(
 
     localtime_r(&current, &tm);
     /* let mktime figure this dst on its own */
-    tm.tm_isdst = -1;
+    //tm.tm_isdst = -1;
 
     int limit = 2;
     switch (baseint) {
@@ -1519,6 +1648,146 @@ time_t find_next_time(
                                    like the daylight saving time skips */
     return madetime;
 
+}
+
+static int strfduration(char * const dest, const size_t destlen, const char * const fmt, const double duration)
+{
+    char *d = dest, * const dbound = dest + destlen;
+    const char *f;
+    int wlen = 0;
+    double seconds = fabs(duration) / 1000.0,
+           minutes = seconds / 60.0,
+           hours = minutes / 60.0,
+           days = hours / 24.0,
+           weeks = days / 7.0;
+
+#define STORC(chr) do { \
+    if (wlen == INT_MAX) return -1; \
+    wlen++; \
+    if (d < dbound) \
+        *d++ = (chr); \
+} while(0);
+
+#define STORPF(valArg) do { \
+    double pval = trunc((valArg) * pow(10.0, precision)) / pow(10.0, precision); \
+    char *tmpfmt; \
+    ptrdiff_t avail = dbound - d; \
+    int r; \
+\
+    if (avail < 0 || (uintmax_t) avail > SIZE_MAX) return -1; \
+\
+    tmpfmt = sprintf_alloc("%%%s%d.%df", \
+                              zpad ? "0" : "", \
+                                width, \
+                                   precision); \
+    if (!tmpfmt) return -1; \
+\
+    r = snprintf(d, avail, tmpfmt, pval); \
+    free(tmpfmt); \
+    if (r < 0) return -1; \
+    d += min(avail, r); \
+    if (INT_MAX-r < wlen) return -1; \
+    wlen += r; \
+} while(0);
+
+    if (duration < 0)
+        STORC('-')
+
+    for (f=fmt ; *f ; f++) {
+        if (*f != '%') {
+            STORC(*f)
+        } else {
+            int zpad, width = 0, precision = 0;
+
+            f++;
+
+            if ((zpad = *f == '0'))
+                f++;
+
+            if (isdigit(*f)) {
+                int nread;
+                sscanf(f, "%d%n", &width, &nread);
+                f += nread;
+            }
+
+            if (*f == '.') {
+                int nread;
+                f++;
+                if (1 == sscanf(f, "%d%n", &precision, &nread)) {
+                    if (precision < 0) {
+                        rrd_set_error("Wrong duration format");
+                        return -1;
+                    }
+                    f += nread;
+                }
+            }
+
+            switch(*f) {
+                case '%':
+                    STORC('%')
+                    break;
+                case 'W':
+                    STORPF(weeks)
+                    break;
+                case 'd':
+                    STORPF(days - trunc(weeks)*7.0)
+                    break;
+                case 'D':
+                    STORPF(days)
+                    break;
+                case 'h':
+                    STORPF(hours - trunc(days)*24.0)
+                    break;
+                case 'H':
+                    STORPF(hours)
+                    break;
+                case 'm':
+                    STORPF(minutes - trunc(hours)*60.0)
+                    break;
+                case 'M':
+                    STORPF(minutes)
+                    break;
+                case 's':
+                    STORPF(seconds - trunc(minutes)*60.0)
+                    break;
+                case 'S':
+                    STORPF(seconds)
+                    break;
+                case 'f':
+                    STORPF(fabs(duration) - trunc(seconds)*1000.0)
+                    break;
+                default:
+                    rrd_set_error("Wrong duration format");
+                    return -1;
+            }
+        }
+    }
+
+    STORC('\0')
+    if (destlen > 0)
+        *(dbound-1) = '\0';
+
+    return wlen-1;
+
+#undef STORC
+#undef STORPF
+}
+
+static int timestamp_to_tm(struct tm *tm, double timestamp)
+{
+    time_t ts;
+
+    if (timestamp < LLONG_MIN || timestamp > LLONG_MAX)
+        return 1;
+
+    ts = (long long int) timestamp;
+
+    if (ts != (long long int) timestamp)
+        return 1;
+
+    gmtime_r(&ts, tm);
+
+    return 0;
 }
 
 
@@ -1597,22 +1866,24 @@ int print_calc(
                 }
             }           /* prepare printval */
 
-            if (!im->gdes[i].strftm && (percent_s = strstr(im->gdes[i].format, "%S")) != NULL) {
-                /* Magfact is set to -1 upon entry to print_calc.  If it
-                 * is still less than 0, then we need to run auto_scale.
-                 * Otherwise, put the value into the correct units.  If
-                 * the value is 0, then do not set the symbol or magnification
-                 * so next the calculation will be performed again. */
-                if (magfact < 0.0) {
+            if (!im->gdes[i].strftm && im->gdes[i].vformatter == VALUE_FORMATTER_NUMERIC) {
+                if ((percent_s = strstr(im->gdes[i].format, "%S")) != NULL) {
+                    /* Magfact is set to -1 upon entry to print_calc.  If it
+                     * is still less than 0, then we need to run auto_scale.
+                     * Otherwise, put the value into the correct units.  If
+                     * the value is 0, then do not set the symbol or magnification
+                     * so next the calculation will be performed again. */
+                    if (magfact < 0.0) {
+                        auto_scale(im, &printval, &si_symb, &magfact);
+                        if (printval == 0.0)
+                            magfact = -1.0;
+                    } else {
+                        printval /= magfact;
+                    }
+                    *(++percent_s) = 's';
+                } else if (strstr(im->gdes[i].format, "%s") != NULL) {
                     auto_scale(im, &printval, &si_symb, &magfact);
-                    if (printval == 0.0)
-                        magfact = -1.0;
-                } else {
-                    printval /= magfact;
                 }
-                *(++percent_s) = 's';
-            } else if (!im->gdes[i].strftm && strstr(im->gdes[i].format, "%s") != NULL) {
-                auto_scale(im, &printval, &si_symb, &magfact);
             }
 
             if (im->gdes[i].gf == GF_PRINT) {
@@ -1620,16 +1891,65 @@ int print_calc(
 
                 if (im->gdes[i].strftm) {
                     prline.u_str = (char*)malloc((FMT_LEG_LEN + 2) * sizeof(char));
-                    strftime(prline.u_str,
-                             FMT_LEG_LEN, im->gdes[i].format, &tmvdef);
-                } else if (bad_format(im->gdes[i].format)) {
-                    rrd_set_error
-                        ("bad format for PRINT in '%s'", im->gdes[i].format);
-                    return -1;
+                    if (im->gdes[vidx].vf.never == 1) {
+                       time_clean(prline.u_str, im->gdes[i].format);
+                    } else {
+                        strftime(prline.u_str,
+                                 FMT_LEG_LEN, im->gdes[i].format, &tmvdef);
+                    }
                 } else {
-                    prline.u_str =
-                        sprintf_alloc(im->gdes[i].format, printval, si_symb);
+                    struct tm tmval;
+                    switch(im->gdes[i].vformatter) {
+                    case VALUE_FORMATTER_NUMERIC:
+                        if (bad_format_print(im->gdes[i].format)) {
+                            return -1;
+                        } else {
+                            prline.u_str =
+                                sprintf_alloc(im->gdes[i].format, printval, si_symb);
+                        }
+                        break;
+                    case VALUE_FORMATTER_TIMESTAMP:
+                        if (!isfinite(printval) || timestamp_to_tm(&tmval, printval)) {
+                            prline.u_str = sprintf_alloc("%.0f", printval);
+                        } else {
+                            const char *fmt;
+                            if (im->gdes[i].format == NULL || im->gdes[i].format[0] == '\0')
+                                fmt = default_timestamp_fmt;
+                            else
+                                fmt = im->gdes[i].format;
+                            prline.u_str = (char*) malloc(FMT_LEG_LEN*sizeof(char));
+                            if (!prline.u_str)
+                                return -1;
+                            if (0 == strftime(prline.u_str, FMT_LEG_LEN, fmt, &tmval)) {
+                                free(prline.u_str);
+                                return -1;
+                            }
+                        }
+                        break;
+                    case VALUE_FORMATTER_DURATION:
+                        if (!isfinite(printval)) {
+                            prline.u_str = sprintf_alloc("%f", printval);
+                        } else {
+                            const char *fmt;
+                            if (im->gdes[i].format == NULL || im->gdes[i].format[0] == '\0')
+                                fmt = default_duration_fmt;
+                            else
+                                fmt = im->gdes[i].format;
+                            prline.u_str = (char*) malloc(FMT_LEG_LEN*sizeof(char));
+                            if (!prline.u_str)
+                                return -1;
+                            if (0 > strfduration(prline.u_str, FMT_LEG_LEN, fmt, printval)) {
+                                free(prline.u_str);
+                                return -1;
+                            }
+                         }
+                         break;
+                    default:
+                        rrd_set_error("Unsupported print value formatter");
+                        return -1;
+                    }
                 }
+
                 grinfo_push(im,
                             sprintf_alloc
                             ("print[%ld]", prline_cnt++), RD_I_STR, prline);
@@ -1638,23 +1958,53 @@ int print_calc(
                 /* GF_GPRINT */
 
                 if (im->gdes[i].strftm) {
-                    strftime(im->gdes[i].legend,
-                             FMT_LEG_LEN, im->gdes[i].format, &tmvdef);
+                    if (im->gdes[vidx].vf.never == 1) {
+                       time_clean(im->gdes[i].legend, im->gdes[i].format);
+                    } else {
+                        strftime(im->gdes[i].legend,
+                                 FMT_LEG_LEN, im->gdes[i].format, &tmvdef);
+                    }
                 } else {
-                    if (bad_format(im->gdes[i].format)) {
-                        rrd_set_error
-                            ("bad format for GPRINT in '%s'",
-                             im->gdes[i].format);
+                    struct tm tmval;
+                    switch(im->gdes[i].vformatter) {
+                    case VALUE_FORMATTER_NUMERIC:
+                        if (bad_format_print(im->gdes[i].format)) {
+                           return -1;
+                        }
+                        snprintf(im->gdes[i].legend,
+                                 FMT_LEG_LEN - 2,
+                                 im->gdes[i].format, printval, si_symb);
+                        break;
+                    case VALUE_FORMATTER_TIMESTAMP:
+                        if (!isfinite(printval) || timestamp_to_tm(&tmval, printval)) {
+                            snprintf(im->gdes[i].legend, FMT_LEG_LEN, "%.0f", printval);
+                        } else {
+                            const char *fmt;
+                            if (im->gdes[i].format == NULL || im->gdes[i].format[0] == '\0')
+                                fmt = default_timestamp_fmt;
+                            else
+                                fmt = im->gdes[i].format;
+                            if (0 == strftime(im->gdes[i].legend, FMT_LEG_LEN, fmt, &tmval))
+                                return -1;
+                        }
+                        break;
+                    case VALUE_FORMATTER_DURATION:
+                        if (!isfinite(printval)) {
+                            snprintf(im->gdes[i].legend, FMT_LEG_LEN, "%f", printval);
+                        } else {
+                            const char *fmt;
+                            if (im->gdes[i].format == NULL || im->gdes[i].format[0] == '\0')
+                                fmt = default_duration_fmt;
+                            else
+                                fmt = im->gdes[i].format;
+                            if (0 > strfduration(im->gdes[i].legend, FMT_LEG_LEN, fmt, printval))
+                                return -1;
+                        }
+                        break;
+                    default:
+                        rrd_set_error("Unsupported gprint value formatter");
                         return -1;
                     }
-#ifdef HAVE_SNPRINTF
-                    snprintf(im->gdes[i].legend,
-                             FMT_LEG_LEN - 2,
-                             im->gdes[i].format, printval, si_symb);
-#else
-                    sprintf(im->gdes[i].legend,
-                            im->gdes[i].format, printval, si_symb);
-#endif
                 }
                 graphelement = 1;
             }
@@ -1692,6 +2042,9 @@ int print_calc(
                 ("STACK should already be turned into LINE or AREA here");
             return -1;
             break;
+        case GF_XAXIS:
+        case GF_YAXIS:
+	    break;
         }
     }
     return graphelement;
@@ -1737,7 +2090,7 @@ int leg_place(
         for (i = 0; i < im->gdes_c; i++) {
             char      prt_fctn; /*special printfunctions */
             if(calc_width){
-                strcpy(saved_legend, im->gdes[i].legend);
+                strncpy(saved_legend, im->gdes[i].legend, sizeof saved_legend);
             }
 
             fill_last = fill;
@@ -1764,7 +2117,7 @@ int leg_place(
             }
 
             leg_cc = strlen(im->gdes[i].legend);
-            /* is there a controle code at the end of the legend string ? */
+            /* is there a control code at the end of the legend string ? */
             if (leg_cc >= 2 && im->gdes[i].legend[leg_cc - 2] == '\\') {
                 prt_fctn = im->gdes[i].legend[leg_cc - 1];
                 leg_cc -= 2;
@@ -1795,7 +2148,7 @@ int leg_place(
                 prt_fctn = '\0';
             }
 
-            /* remove exess space from the end of the legend for \g */
+            /* remove excess space from the end of the legend for \g */
             while (prt_fctn == 'g' &&
                    leg_cc > 0 && im->gdes[i].legend[leg_cc - 1] == ' ') {
                 leg_cc--;
@@ -1903,7 +2256,7 @@ int leg_place(
             }
 
             if(calc_width){
-                strcpy(im->gdes[i].legend, saved_legend);
+                strncpy(im->gdes[i].legend, saved_legend, sizeof im->gdes[0].legend);
             }
         }
 
@@ -1943,7 +2296,7 @@ int calc_horizontal_grid(
         return 0;
     }
 
-    /* find grid spaceing */
+    /* find grid spacing */
     pixel = 1;
     if (isnan(im->ygridstep)) {
         if (im->extra_flags & ALTYGRID) {
@@ -1986,7 +2339,7 @@ int calc_horizontal_grid(
 
                 if (im->unitslength < len + 2)
                     im->unitslength = len + 2;
-                sprintf(im->ygrid_scale.labfmt,
+                snprintf(im->ygrid_scale.labfmt, sizeof im->ygrid_scale.labfmt,
                         "%%%d.%df%s", len,
                         -fractionals, (im->symbol != ' ' ? " %c" : ""));
             } else {
@@ -1994,7 +2347,7 @@ int calc_horizontal_grid(
 
                 if (im->unitslength < len + 2)
                     im->unitslength = len + 2;
-                sprintf(im->ygrid_scale.labfmt,
+                snprintf(im->ygrid_scale.labfmt, sizeof im->ygrid_scale.labfmt,
                         "%%%d.0f%s", len, (im->symbol != ' ' ? " %c" : ""));
             }
         } else {        /* classic rrd grid */
@@ -2056,56 +2409,132 @@ int draw_horizontal_grid(
             if (i % im->ygrid_scale.labfact == 0
                 || (nlabels == 1
                     && (YN < im->yorigin - im->ysize || YN > im->yorigin))) {
-                if (im->symbol == ' ') {
-                    if (im->extra_flags & ALTYGRID) {
-                        sprintf(graph_label,
-                                im->ygrid_scale.labfmt,
-                                scaledstep * (double) i);
-                    } else {
-                        if (MaxY < 10) {
-                            sprintf(graph_label, "%4.1f",
-                                    scaledstep * (double) i);
+                switch(im->primary_axis_formatter) {
+                case VALUE_FORMATTER_NUMERIC:
+                    if (im->symbol == ' ') {
+                        if (im->primary_axis_format == NULL || im->primary_axis_format[0] == '\0') {
+                            if (im->extra_flags & ALTYGRID) {
+                                snprintf(graph_label, sizeof graph_label,
+                                        im->ygrid_scale.labfmt,
+                                        scaledstep * (double) i);
+                            } else {
+                                if (MaxY < 10) {
+                                    snprintf(graph_label, sizeof graph_label, "%4.1f",
+                                            scaledstep * (double) i);
+                                } else {
+                                    snprintf(graph_label, sizeof graph_label,"%4.0f",
+                                            scaledstep * (double) i);
+                                }
+                            }
                         } else {
-                            sprintf(graph_label, "%4.0f",
+                            snprintf(graph_label, sizeof graph_label, im->primary_axis_format,
                                     scaledstep * (double) i);
                         }
-                    }
-                } else {
-                    char      sisym = (i == 0 ? ' ' : im->symbol);
-
-                    if (im->extra_flags & ALTYGRID) {
-                        sprintf(graph_label,
-                                im->ygrid_scale.labfmt,
-                                scaledstep * (double) i, sisym);
                     } else {
-                        if (MaxY < 10) {
-                            sprintf(graph_label, "%4.1f %c",
-                                    scaledstep * (double) i, sisym);
+                        char      sisym = (i == 0 ? ' ' : im->symbol);
+                        if (im->primary_axis_format == NULL || im->primary_axis_format[0] == '\0') {
+                            if (im->extra_flags & ALTYGRID) {
+                                snprintf(graph_label,sizeof graph_label,
+                                        im->ygrid_scale.labfmt,
+                                        scaledstep * (double) i, sisym);
+                            } else {
+                                if (MaxY < 10) {
+                                    snprintf(graph_label, sizeof graph_label,"%4.1f %c",
+                                            scaledstep * (double) i, sisym);
+                                } else {
+                                    snprintf(graph_label, sizeof graph_label, "%4.0f %c",
+                                            scaledstep * (double) i, sisym);
+                                }
+                            }
                         } else {
-                            sprintf(graph_label, "%4.0f %c",
+                            sprintf(graph_label, im->primary_axis_format,
                                     scaledstep * (double) i, sisym);
                         }
                     }
+                    break;
+                case VALUE_FORMATTER_TIMESTAMP:
+                    {
+                        struct tm tm;
+                        const char *yfmt;
+                        if (im->primary_axis_format == NULL || im->primary_axis_format[0] == '\0')
+                            yfmt = default_timestamp_fmt;
+                        else
+                            yfmt = im->primary_axis_format;
+                        if (timestamp_to_tm(&tm, im->ygrid_scale.gridstep*i))
+                            snprintf(graph_label, sizeof graph_label, "%f",
+                                     im->ygrid_scale.gridstep * i);
+                        else
+                            if (0 == strftime(graph_label, sizeof graph_label, yfmt, &tm))
+                                graph_label[0] = '\0';
+                    }
+                    break;
+                case VALUE_FORMATTER_DURATION:
+                    {
+                        const char *yfmt;
+                        if (im->primary_axis_format == NULL || im->primary_axis_format[0] == '\0')
+                            yfmt = default_duration_fmt;
+                        else
+                            yfmt = im->primary_axis_format;
+                        if (0 > strfduration(graph_label, sizeof graph_label, yfmt, im->ygrid_scale.gridstep*i))
+                            graph_label[0] = '\0';
+                    }
+                    break;
+                default:
+                    rrd_set_error("Unsupported left axis value formatter");
+                    return -1;
                 }
                 nlabels++;
                 if (im->second_axis_scale != 0){
                         char graph_label_right[100];
                         double sval = im->ygrid_scale.gridstep*(double)i*im->second_axis_scale+im->second_axis_shift;
-                        if (im->second_axis_format[0] == '\0'){
-                            if (!second_axis_magfact){
-                                double dummy = im->ygrid_scale.gridstep*(double)(sgrid+egrid)/2.0*im->second_axis_scale+im->second_axis_shift;
-                                auto_scale(im,&dummy,&second_axis_symb,&second_axis_magfact);
-                            }
-                            sval /= second_axis_magfact;
+                        switch(im->second_axis_formatter) {
+                        case VALUE_FORMATTER_NUMERIC:
+                            if (im->second_axis_format == NULL || im->second_axis_format[0] == '\0') {
+                                if (!second_axis_magfact){
+                                    double dummy = im->ygrid_scale.gridstep*(double)(sgrid+egrid)/2.0*im->second_axis_scale+im->second_axis_shift;
+                                    auto_scale(im,&dummy,&second_axis_symb,&second_axis_magfact);
+                                }
+                                sval /= second_axis_magfact;
 
-                            if(MaxY < 10) {
-                                sprintf(graph_label_right,"%5.1f %s",sval,second_axis_symb);
-                            } else {
-                                sprintf(graph_label_right,"%5.0f %s",sval,second_axis_symb);
+                                if(MaxY < 10) {
+                                    snprintf(graph_label_right, sizeof graph_label_right, "%5.1f %s",sval,second_axis_symb);
+                                } else {
+                                    snprintf(graph_label_right, sizeof graph_label_right, "%5.0f %s",sval,second_axis_symb);
+                                }
                             }
-                        }
-                        else {
-                           sprintf(graph_label_right,im->second_axis_format,sval,"");
+                            else {
+                               snprintf(graph_label_right, sizeof graph_label_right, im->second_axis_format,sval,"");
+                            }
+                            break;
+                        case VALUE_FORMATTER_TIMESTAMP:
+                            {
+                                struct tm tm;
+                                const char *yfmt;
+                                if (im->second_axis_format == NULL || im->second_axis_format[0] == '\0')
+                                    yfmt = default_timestamp_fmt;
+                                else
+                                    yfmt = im->second_axis_format;
+                                if (timestamp_to_tm(&tm, sval))
+                                    snprintf(graph_label_right, sizeof graph_label_right, "%f", sval);
+                                else
+                                    if (0 == strftime(graph_label_right, sizeof graph_label, yfmt, &tm))
+                                        graph_label_right[0] = '\0';
+                             }
+                             break;
+                        case VALUE_FORMATTER_DURATION:
+                            {
+                                const char *yfmt;
+                                if (im->second_axis_format == NULL || im->second_axis_format[0] == '\0')
+                                    yfmt = default_duration_fmt;
+                                else
+                                    yfmt = im->second_axis_format;
+                                if (0 > strfduration(graph_label_right, sizeof graph_label_right, yfmt, sval))
+                                    graph_label_right[0] = '\0';
+                            }
+                            break;
+                        default:
+                            rrd_set_error("Unsupported right axis value formatter");
+                            return -1;
                         }
                         gfx_text ( im,
                                X1+7, Y0,
@@ -2177,7 +2606,7 @@ double frexp10(
 }
 
 
-/* logaritmic horizontal grid */
+/* logarithmic horizontal grid */
 int horizontal_log_grid(
     image_desc_t
     *im)
@@ -2291,26 +2720,26 @@ int horizontal_log_grid(
                 symbol = si_symbol[scale + si_symbcenter];
             else
                 symbol = '?';
-            sprintf(graph_label, "%3.0f %c", pvalue, symbol);
+            snprintf(graph_label, sizeof graph_label, "%3.0f %c", pvalue, symbol);
         } else {
-            sprintf(graph_label, "%3.0e", value);
+            snprintf(graph_label, sizeof graph_label, "%3.0e", value);
         }
         if (im->second_axis_scale != 0){
                 char graph_label_right[100];
                 double sval = value*im->second_axis_scale+im->second_axis_shift;
-                if (im->second_axis_format[0] == '\0'){
+                if (im->second_axis_format == NULL || im->second_axis_format[0] == '\0') {
                         if (im->extra_flags & FORCE_UNITS_SI) {
                                 double mfac = 1;
                                 char   *symb = "";
                                 auto_scale(im,&sval,&symb,&mfac);
-                                sprintf(graph_label_right,"%4.0f %s", sval,symb);
+                                snprintf(graph_label_right, sizeof graph_label_right, "%4.0f %s", sval,symb);
                         }
                         else {
-                                sprintf(graph_label_right,"%3.0e", sval);
+                                snprintf(graph_label_right, sizeof graph_label_right, "%3.0e", sval);
                         }
                 }
                 else {
-                      sprintf(graph_label_right,im->second_axis_format,sval,"");
+                      snprintf(graph_label_right, sizeof graph_label_right, im->second_axis_format,sval,"");
                 }
 
                 gfx_text ( im,
@@ -2335,7 +2764,7 @@ int horizontal_log_grid(
         /* minor grid */
         if (mid < 4 && exfrac == 1) {
             /* find first and last minor line behind current major line
-             * i is the first line and j tha last */
+             * i is the first line and j the last */
             if (flab == 0) {
                 min_exp = val_exp - 1;
                 for (i = 1; yloglab[mid][i] < 10.0; i++);
@@ -2402,7 +2831,7 @@ int horizontal_log_grid(
     /* draw minor lines after highest major line */
     if (mid < 4 && exfrac == 1) {
         /* find first and last minor line below current major line
-         * i is the first line and j tha last */
+         * i is the first line and j the last */
         if (flab == 0) {
             min_exp = val_exp - 1;
             for (i = 1; yloglab[mid][i] < 10.0; i++);
@@ -2468,21 +2897,21 @@ void vertical_grid(
 {
     int       xlab_sel; /* which sort of label and grid ? */
     time_t    ti, tilab, timajor;
-    long      factor;
+    double    factor;
     char      graph_label[100];
     double    X0, Y0, Y1;   /* points for filled graph and more */
     struct tm tm;
 
     /* the type of time grid is determined by finding
        the number of seconds per pixel in the graph */
-    if (im->xlab_user.minsec == -1) {
-        factor = (im->end - im->start) / im->xsize;
+    if (im->xlab_user.minsec == -1.0) {
+        factor = (double)(im->end - im->start) / (double)im->xsize;
         xlab_sel = 0;
         while (xlab[xlab_sel + 1].minsec !=
-               -1 && xlab[xlab_sel + 1].minsec <= factor) {
+               -1.0 && xlab[xlab_sel + 1].minsec <= factor) {
             xlab_sel++;
         }               /* pick the last one */
-        while (xlab[xlab_sel - 1].minsec ==
+        while (xlab_sel > 0 && xlab[xlab_sel - 1].minsec ==
                xlab[xlab_sel].minsec
                && xlab[xlab_sel].length > (im->end - im->start)) {
             xlab_sel--;
@@ -2629,7 +3058,7 @@ void axis_paint(
              im->yorigin - im->ysize -
              4, MGRIDWIDTH, im->graph_col[GRC_AXIS]);
     /* arrow for X and Y axis direction */
-    gfx_new_area(im, im->xorigin + im->xsize + 2, im->yorigin - 3, im->xorigin + im->xsize + 2, im->yorigin + 3, im->xorigin + im->xsize + 7, im->yorigin,  /* horyzontal */
+    gfx_new_area(im, im->xorigin + im->xsize + 2, im->yorigin - 3, im->xorigin + im->xsize + 2, im->yorigin + 3, im->xorigin + im->xsize + 7, im->yorigin,  /* horizontal */
                  im->graph_col[GRC_ARROW]);
     gfx_close_path(im);
     gfx_new_area(im, im->xorigin - 3, im->yorigin - im->ysize - 2, im->xorigin + 3, im->yorigin - im->ysize - 2, im->xorigin, im->yorigin - im->ysize - 7,  /* vertical */
@@ -2649,7 +3078,7 @@ void axis_paint(
 
 }
 
-void grid_paint(
+int grid_paint(
     image_desc_t *im)
 {
     long      i;
@@ -2681,6 +3110,8 @@ void grid_paint(
             res = horizontal_log_grid(im);
         } else {
             res = draw_horizontal_grid(im);
+            if (res < 0)
+                return -1;
         }
 
         /* dont draw horizontal grid if there is no min and max val */
@@ -2700,7 +3131,7 @@ void grid_paint(
     }
 
     /* yaxis unit description */
-    if (im->ylegend[0] != '\0'){
+    if (im->ylegend && im->ylegend[0] != '\0') {
         gfx_text(im,
                  im->xOriginLegendY+10,
                  im->yOriginLegendY,
@@ -2712,7 +3143,7 @@ void grid_paint(
                  RRDGRAPH_YLEGEND_ANGLE, GFX_H_CENTER, GFX_V_CENTER, im->ylegend);
 
     }
-    if (im->second_axis_legend[0] != '\0'){
+    if (im->second_axis_legend && im->second_axis_legend[0] != '\0') {
             gfx_text( im,
                   im->xOriginLegendY2+10,
                   im->yOriginLegendY2,
@@ -2731,7 +3162,7 @@ void grid_paint(
              im->
              text_prop[TEXT_PROP_TITLE].
              font_desc,
-             im->tabwidth, 0.0, GFX_H_CENTER, GFX_V_TOP, im->title);
+             im->tabwidth, 0.0, GFX_H_CENTER, GFX_V_TOP, im->title?im->title:"");
     /* rrdtool 'logo' */
     if (!(im->extra_flags & NO_RRDTOOL_TAG)){
         water_color = im->graph_col[GRC_FONT];
@@ -2745,7 +3176,7 @@ void grid_paint(
                  -90, GFX_H_LEFT, GFX_V_TOP, "RRDTOOL / TOBI OETIKER");
     }
     /* graph watermark */
-    if (im->watermark[0] != '\0') {
+    if (im->watermark && im->watermark[0] != '\0') {
         water_color = im->graph_col[GRC_FONT];
         water_color.alpha = 0.3;
         gfx_text(im,
@@ -2759,12 +3190,60 @@ void grid_paint(
 
     /* graph labels */
     if (!(im->extra_flags & NOLEGEND) && !(im->extra_flags & ONLY_GRAPH)) {
+        long first_noncomment = im->gdes_c, last_noncomment = 0;
+        /* get smallest and biggest leg_y values. Assumes
+         * im->gdes[i].leg_y is in order. */
+        double min = 0, max = 0;
+        int gotcha = 0;
+        for (i = 0; i < im->gdes_c; i++) {
+            if (im->gdes[i].legend[0] == '\0')
+                continue;
+            if (!gotcha) {
+                min = im->gdes[i].leg_y;
+                gotcha = 1;
+            }
+            if (im->gdes[i].gf != GF_COMMENT) {
+                if (im->legenddirection == BOTTOM_UP2)
+                    min = im->gdes[i].leg_y;
+                first_noncomment = i;
+                break;
+            }
+        }
+        gotcha = 0;
+        for (i = im->gdes_c - 1; i >= 0; i--) {
+            if (im->gdes[i].legend[0] == '\0')
+                continue;
+            if (!gotcha) {
+                max = im->gdes[i].leg_y;
+                gotcha = 1;
+            }
+            if (im->gdes[i].gf != GF_COMMENT) {
+                if (im->legenddirection == BOTTOM_UP2)
+                    max = im->gdes[i].leg_y;
+                last_noncomment = i;
+                break;
+            }
+        }
         for (i = 0; i < im->gdes_c; i++) {
             if (im->gdes[i].legend[0] == '\0')
                 continue;
             /* im->gdes[i].leg_y is the bottom of the legend */
             X0 = im->xOriginLegend + im->gdes[i].leg_x;
-            Y0 = im->legenddirection == TOP_DOWN ? im->yOriginLegend + im->gdes[i].leg_y : im->yOriginLegend + im->legendheight - im->gdes[i].leg_y;
+            int reverse = 0;
+            switch (im->legenddirection) {
+                case TOP_DOWN:
+                    reverse = 0;
+                    break;
+                case BOTTOM_UP:
+                    reverse = 1;
+                    break;
+                case BOTTOM_UP2:
+                    reverse = i >= first_noncomment && i <= last_noncomment;
+                    break;
+            }
+            Y0 = reverse ?
+                im->yOriginLegend + max + min - im->gdes[i].leg_y :
+                im->yOriginLegend + im->gdes[i].leg_y;
             gfx_text(im, X0, Y0,
                      im->graph_col[GRC_FONT],
                      im->
@@ -2789,7 +3268,7 @@ void grid_paint(
                 /* shift the box up a bit */
                 Y0 -= boxV * 0.4;
 
-        if (im->dynamic_labels && im->gdes[i].gf == GF_HRULE) { /* [-] */ 
+        if (im->dynamic_labels && im->gdes[i].gf == GF_HRULE) { /* [-] */
 			cairo_save(im->cr);
 			cairo_new_path(im->cr);
 			cairo_set_line_width(im->cr, 1.0);
@@ -2857,6 +3336,7 @@ void grid_paint(
             }
         }
     }
+    return 0;
 }
 
 
@@ -2873,7 +3353,7 @@ int lazy_check(
 
     if (im->lazy == 0)
         return 0;       /* no lazy option */
-    if (strlen(im->graphfile) == 0)
+    if (im->graphfile == NULL)
         return 0;       /* inmemory option */
     if (stat(im->graphfile, &imgstat) != 0)
         return 0;       /* can't stat */
@@ -2944,24 +3424,24 @@ int graph_size_location(
         return 0;
     }
 
-    if(im->watermark[0] != '\0') {
+    if (im->watermark && im->watermark[0] != '\0') {
         Ywatermark = im->text_prop[TEXT_PROP_WATERMARK].size * 2;
     }
 
     // calculate the width of the left vertical legend
-    if (im->ylegend[0] != '\0') {
+    if (im->ylegend && im->ylegend[0] != '\0') {
         Xvertical = im->text_prop[TEXT_PROP_UNIT].size * 2;
     }
 
     // calculate the width of the right vertical legend
-    if (im->second_axis_legend[0] != '\0') {
+    if (im->second_axis_legend && im->second_axis_legend[0] != '\0') {
         Xvertical2 = im->text_prop[TEXT_PROP_UNIT].size * 2;
     }
     else{
         Xvertical2 = Xspacing;
     }
 
-    if (im->title[0] != '\0') {
+    if (im->title && im->title[0] != '\0') {
         /* The title is placed "inbetween" two text lines so it
          ** automatically has some vertical spacing.  The horizontal
          ** spacing is added here, on each side.
@@ -3068,7 +3548,7 @@ int graph_size_location(
             Ymain -= 0.5*Yspacing;
         }
 
-        if (im->watermark[0] != '\0') {
+        if (im->watermark && im->watermark[0] != '\0') {
             Ymain -= Ywatermark;
         }
         /* limit the remaining height to 0 */
@@ -3128,7 +3608,7 @@ int graph_size_location(
             im->yimg += 0.5*Yspacing;
         }
 
-        if (im->watermark[0] != '\0') {
+        if (im->watermark && im->watermark[0] != '\0') {
             im->yimg += Ywatermark;
         }
     }
@@ -3137,7 +3617,7 @@ int graph_size_location(
     /* In case of putting the legend in west or east position the first
      ** legend calculation might lead to wrong positions if some items
      ** are not aligned on the left hand side (e.g. centered) as the
-     ** legendwidth wight have been increased after the item was placed.
+     ** legendwidth might have been increased after the item was placed.
      ** In this case the positions have to be recalculated.
      */
     if (!(im->extra_flags & NOLEGEND)) {
@@ -3274,13 +3754,15 @@ static cairo_status_t cairo_output(
 int graph_paint(
     image_desc_t *im)
 {
-    int       i, ii;
     int       lazy = lazy_check(im);
-    double    areazero = 0.0;
-    graph_desc_t *lastgdes = NULL;
-    rrd_infoval_t info;
+    int       cnt;
 
-//    PangoFontMap *font_map = pango_cairo_font_map_get_default();
+    /* imgformat XML or higher dispatch to xport
+     * output format there is selected via graph_type
+     */
+    if (im->imgformat >= IF_XML) {
+      return rrd_graph_xport(im);
+    }
 
     /* pull the data from the rrd files ... */
     if (data_fetch(im) == -1)
@@ -3293,19 +3775,41 @@ int graph_paint(
      * if there are no graph elements (i==0) we stop here ...
      * if we are lazy, try to quit ...
      */
-    i = print_calc(im);
-    if (i < 0)
+    cnt = print_calc(im);
+    if (cnt < 0)
         return -1;
 
     /* if we want and can be lazy ... quit now */
-    if (i == 0)
+    if (cnt == 0)
         return 0;
+
+    /* otherwise call graph_paint_timestring */
+    switch (im->graph_type) {
+    case GTYPE_TIME:
+      return graph_paint_timestring(im,lazy,cnt);
+      break;
+    case GTYPE_XY:
+      return graph_paint_xy(im,lazy,cnt);
+      break;
+    }
+    /* final return with error*/
+    rrd_set_error("Graph type %i is not implemented",im->graph_type);
+    return -1;
+}
+
+int graph_paint_timestring(
+                          image_desc_t *im, int lazy, int cnt)
+{
+    int       i,ii;
+    double    areazero = 0.0;
+    graph_desc_t *lastgdes = NULL;
+    rrd_infoval_t info;
 
 /**************************************************************
  *** Calculating sizes and locations became a bit confusing ***
  *** so I moved this into a separate function.              ***
  **************************************************************/
-    if (graph_size_location(im, i) == -1)
+    if (graph_size_location(im, cnt) == -1)
         return -1;
 
     info.u_cnt = im->xorigin;
@@ -3353,67 +3857,11 @@ int graph_paint(
     ytr(im, DNAN);
 /*   if (im->gridfit)
      apply_gridfit(im); */
-    /* the actual graph is created by going through the individual
-       graph elements and then drawing them */
-    cairo_surface_destroy(im->surface);
-    switch (im->imgformat) {
-    case IF_PNG:
-        im->surface =
-            cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
-                                       im->ximg * im->zoom,
-                                       im->yimg * im->zoom);
-        break;
-    case IF_PDF:
-        im->gridfit = 0;
-        im->surface = strlen(im->graphfile)
-            ? cairo_pdf_surface_create(im->graphfile, im->ximg * im->zoom,
-                                       im->yimg * im->zoom)
-            : cairo_pdf_surface_create_for_stream
-            (&cairo_output, im, im->ximg * im->zoom, im->yimg * im->zoom);
-        break;
-    case IF_EPS:
-        im->gridfit = 0;
-        im->surface = strlen(im->graphfile)
-            ?
-            cairo_ps_surface_create(im->graphfile, im->ximg * im->zoom,
-                                    im->yimg * im->zoom)
-            : cairo_ps_surface_create_for_stream
-            (&cairo_output, im, im->ximg * im->zoom, im->yimg * im->zoom);
-        break;
-    case IF_SVG:
-        im->gridfit = 0;
-        im->surface = strlen(im->graphfile)
-            ?
-            cairo_svg_surface_create(im->
-                                     graphfile,
-                                     im->ximg * im->zoom, im->yimg * im->zoom)
-            : cairo_svg_surface_create_for_stream
-            (&cairo_output, im, im->ximg * im->zoom, im->yimg * im->zoom);
-        cairo_svg_surface_restrict_to_version
-            (im->surface, CAIRO_SVG_VERSION_1_1);
-        break;
-    };
-    cairo_destroy(im->cr);
-    im->cr = cairo_create(im->surface);
-    cairo_set_antialias(im->cr, im->graph_antialias);
-    cairo_scale(im->cr, im->zoom, im->zoom);
-//    pango_cairo_font_map_set_resolution(PANGO_CAIRO_FONT_MAP(font_map), 100);
-    gfx_new_area(im, 0, 0, 0, im->yimg,
-                 im->ximg, im->yimg, im->graph_col[GRC_BACK]);
-    gfx_add_point(im, im->ximg, 0);
-    gfx_close_path(im);
-    gfx_new_area(im, im->xorigin,
-                 im->yorigin,
-                 im->xorigin +
-                 im->xsize, im->yorigin,
-                 im->xorigin +
-                 im->xsize,
-                 im->yorigin - im->ysize, im->graph_col[GRC_CANVAS]);
-    gfx_add_point(im, im->xorigin, im->yorigin - im->ysize);
-    gfx_close_path(im);
-    cairo_rectangle(im->cr, im->xorigin, im->yorigin - im->ysize - 1.0,
-                    im->xsize, im->ysize + 2.0);
-    cairo_clip(im->cr);
+
+    /* set up cairo */
+    if (graph_cairo_setup(im)) { return -1; }
+
+    /* other stuff */
     if (im->minval > 0.0)
         areazero = im->minval;
     if (im->maxval < 0.0)
@@ -3431,6 +3879,8 @@ int graph_paint(
         case GF_VRULE:
         case GF_XPORT:
         case GF_SHIFT:
+        case GF_XAXIS:
+        case GF_YAXIS:
             break;
         case GF_TICK:
             for (ii = 0; ii < im->xsize; ii++) {
@@ -3461,9 +3911,9 @@ int graph_paint(
         case GF_AREA: {
             rrd_value_t diffval = im->maxval - im->minval;
             rrd_value_t maxlimit = im->maxval + 9 * diffval;
-            rrd_value_t minlimit = im->minval - 9 * diffval;        
+            rrd_value_t minlimit = im->minval - 9 * diffval;
             for (ii = 0; ii < im->xsize; ii++) {
-               /* fix data points at oo and -oo */
+                /* fix data points at oo and -oo */
                 if (isinf(im->gdes[i].p_data[ii])) {
                     if (im->gdes[i].p_data[ii] > 0) {
                         im->gdes[i].p_data[ii] = im->maxval;
@@ -3473,12 +3923,12 @@ int graph_paint(
                 }
                 /* some versions of cairo go unstable when trying
                    to draw way out of the canvas ... lets not even try */
-                if (im->gdes[i].p_data[ii] > maxlimit) {
-                    im->gdes[i].p_data[ii] = maxlimit;
-                }
-                if (im->gdes[i].p_data[ii] < minlimit) {
-                    im->gdes[i].p_data[ii] = minlimit;
-                }
+               if (im->gdes[i].p_data[ii] > maxlimit) {
+                   im->gdes[i].p_data[ii] = maxlimit;
+               }
+               if (im->gdes[i].p_data[ii] < minlimit) {
+                   im->gdes[i].p_data[ii] = minlimit;
+               }
             }           /* for */
 
             /* *******************************************************
@@ -3567,6 +4017,9 @@ int graph_paint(
                     cairo_stroke(im->cr);
                     cairo_restore(im->cr);
                 } else {
+					double lastx=0;
+					double lasty=0;
+                    int    isArea = isnan(im->gdes[i].col2.red);
                     int       idxI = -1;
                     double   *foreY =
                         (double *) malloc(sizeof(double) * im->xsize * 2);
@@ -3597,12 +4050,17 @@ int graph_paint(
                                                            [cntI + 1], 4)) {
                                 cntI++;
                             }
-                            gfx_new_area(im,
-                                         backX[0], backY[0],
-                                         foreX[0], foreY[0],
-                                         foreX[cntI],
-                                         foreY[cntI], im->gdes[i].col);
-                            while (cntI < idxI) {
+							if (isArea) {
+                            	gfx_new_area(im,
+                            	             backX[0], backY[0],
+                            	             foreX[0], foreY[0],
+                            	             foreX[cntI],
+                            	             foreY[cntI], im->gdes[i].col);
+							} else {
+								lastx = foreX[cntI];
+								lasty = foreY[cntI];
+							}
+							while (cntI < idxI) {
                                 lastI = cntI;
                                 cntI++;
                                 while (cntI < idxI
@@ -3618,9 +4076,32 @@ int graph_paint(
                                                                 + 1], 4)) {
                                     cntI++;
                                 }
-                                gfx_add_point(im, foreX[cntI], foreY[cntI]);
+								if (isArea) {
+	                                gfx_add_point(im, foreX[cntI], foreY[cntI]);
+								} else {
+									gfx_add_rect_fadey(im,
+										lastx, foreY[0],
+										foreX[cntI], foreY[cntI], lasty,
+										im->gdes[i].col,
+										im->gdes[i].col2,
+										im->gdes[i].gradheight
+										);
+									lastx = foreX[cntI];
+									lasty = foreY[cntI];
+								}
                             }
-                            gfx_add_point(im, backX[idxI], backY[idxI]);
+							if (isArea) {
+                            	gfx_add_point(im, backX[idxI], backY[idxI]);
+							} else {
+								gfx_add_rect_fadey(im,
+									lastx, foreY[0],
+									backX[idxI], backY[idxI], lasty,
+									im->gdes[i].col,
+									im->gdes[i].col2,
+									im->gdes[i].gradheight);
+								lastx = backX[idxI];
+								lasty = backY[idxI];
+							}
                             while (idxI > 1) {
                                 lastI = idxI;
                                 idxI--;
@@ -3637,11 +4118,23 @@ int graph_paint(
                                                                 - 1], 4)) {
                                     idxI--;
                                 }
-                                gfx_add_point(im, backX[idxI], backY[idxI]);
+								if (isArea) {
+	                                gfx_add_point(im, backX[idxI], backY[idxI]);
+								} else {
+									gfx_add_rect_fadey(im,
+										lastx, foreY[0],
+										backX[idxI], backY[idxI], lasty,
+										im->gdes[i].col,
+										im->gdes[i].col2,
+										im->gdes[i].gradheight);
+									lastx = backX[idxI];
+									lasty = backY[idxI];
+								}
                             }
                             idxI = -1;
                             drawem = 0;
-                            gfx_close_path(im);
+							if (isArea)
+	                            gfx_close_path(im);
                         }
                         if (drawem != 0) {
                             drawem = 0;
@@ -3704,7 +4197,7 @@ int graph_paint(
             }
             lastgdes = &(im->gdes[i]);
             break;
-        } /* GF_AREA, GF_LINE, GF_GRAD */
+        } /* GF_AREA, GF_LINE*/
         case GF_STACK:
             rrd_set_error
                 ("STACK should already be turned into LINE or AREA here");
@@ -3716,7 +4209,8 @@ int graph_paint(
 
     /* grid_paint also does the text */
     if (!(im->extra_flags & ONLY_GRAPH))
-        grid_paint(im);
+        if (grid_paint(im))
+            return -1;
     if (!(im->extra_flags & ONLY_GRAPH))
         axis_paint(im);
     /* the RULES are the last thing to paint ... */
@@ -3764,26 +4258,120 @@ int graph_paint(
             break;
         }
     }
+    /* close the graph via cairo*/
+    return graph_cairo_finish(im);
+}
 
+int graph_cairo_setup (image_desc_t *im)
+{
+    /* the actual graph is created by going through the individual
+       graph elements and then drawing them */
+    cairo_surface_destroy(im->surface);
+    switch (im->imgformat) {
+    case IF_PNG:
+        im->surface =
+            cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
+                                       im->ximg * im->zoom,
+                                       im->yimg * im->zoom);
+        break;
+#ifdef CAIRO_HAS_PDF_SURFACE
+    case IF_PDF:
+        im->gridfit = 0;
+        im->surface = im->graphfile
+            ? cairo_pdf_surface_create(im->graphfile, im->ximg * im->zoom,
+                                       im->yimg * im->zoom)
+            : cairo_pdf_surface_create_for_stream
+            (&cairo_output, im, im->ximg * im->zoom, im->yimg * im->zoom);
+        break;
+#endif
+#ifdef CAIRO_HAS_PS_SURFACE
+    case IF_EPS:
+        im->gridfit = 0;
+        im->surface = im->graphfile
+            ?
+            cairo_ps_surface_create(im->graphfile, im->ximg * im->zoom,
+                                    im->yimg * im->zoom)
+            : cairo_ps_surface_create_for_stream
+            (&cairo_output, im, im->ximg * im->zoom, im->yimg * im->zoom);
+        break;
+#endif
+#ifdef CAIRO_HAS_SVG_SURFACE
+    case IF_SVG:
+        im->gridfit = 0;
+        im->surface = im->graphfile
+            ?
+            cairo_svg_surface_create(im->
+                                     graphfile,
+                                     im->ximg * im->zoom, im->yimg * im->zoom)
+            : cairo_svg_surface_create_for_stream
+            (&cairo_output, im, im->ximg * im->zoom, im->yimg * im->zoom);
+        cairo_svg_surface_restrict_to_version
+            (im->surface, CAIRO_SVG_VERSION_1_1);
+        break;
+#endif
+    case IF_XML:
+    case IF_XMLENUM:
+    case IF_CSV:
+    case IF_TSV:
+    case IF_SSV:
+    case IF_JSON:
+    case IF_JSONTIME:
+        break;
+    };
+    cairo_destroy(im->cr);
+    im->cr = cairo_create(im->surface);
+    cairo_set_antialias(im->cr, im->graph_antialias);
+    cairo_scale(im->cr, im->zoom, im->zoom);
+//    pango_cairo_font_map_set_resolution(PANGO_CAIRO_FONT_MAP(font_map), 100);
+    gfx_new_area(im, 0, 0, 0, im->yimg,
+                 im->ximg, im->yimg, im->graph_col[GRC_BACK]);
+    gfx_add_point(im, im->ximg, 0);
+    gfx_close_path(im);
+    gfx_new_area(im, im->xorigin,
+                 im->yorigin,
+                 im->xorigin +
+                 im->xsize, im->yorigin,
+                 im->xorigin +
+                 im->xsize,
+                 im->yorigin - im->ysize, im->graph_col[GRC_CANVAS]);
+    gfx_add_point(im, im->xorigin, im->yorigin - im->ysize);
+    gfx_close_path(im);
+    cairo_rectangle(im->cr, im->xorigin, im->yorigin - im->ysize - 1.0,
+                    im->xsize, im->ysize + 2.0);
+    cairo_clip(im->cr);
+    return 0;
+}
+
+int graph_cairo_finish (image_desc_t *im)
+{
 
     switch (im->imgformat) {
     case IF_PNG:
     {
         cairo_status_t status;
 
-        status = strlen(im->graphfile) ?
+        status = im->graphfile ?
             cairo_surface_write_to_png(im->surface, im->graphfile)
             : cairo_surface_write_to_png_stream(im->surface, &cairo_output,
                                                 im);
 
         if (status != CAIRO_STATUS_SUCCESS) {
-            rrd_set_error("Could not save png to '%s'", im->graphfile);
+            rrd_set_error("Could not save png to '%s'",
+                im->graphfile ? im->graphfile : "memory");
             return 1;
         }
         break;
     }
+    case IF_XML:
+    case IF_XMLENUM:
+    case IF_CSV:
+    case IF_TSV:
+    case IF_SSV:
+    case IF_JSON:
+    case IF_JSONTIME:
+      break;
     default:
-        if (strlen(im->graphfile)) {
+        if (im->graphfile) {
             cairo_show_page(im->cr);
         } else {
             cairo_surface_finish(im->surface);
@@ -3794,6 +4382,12 @@ int graph_paint(
     return 0;
 }
 
+int graph_paint_xy(
+                  image_desc_t UNUSED(*im), int UNUSED(lazy), int UNUSED(cnt))
+{
+  rrd_set_error("XY diagram not implemented");
+  return -1;
+}
 
 /*****************************************************
  * graph stuff
@@ -3811,6 +4405,8 @@ int gdes_alloc(
         return -1;
     }
 
+    /* set to zero */
+    memset(&(im->gdes[im->gdes_c - 1]),0,sizeof(graph_desc_t));
 
     im->gdes[im->gdes_c - 1].step = im->step;
     im->gdes[im->gdes_c - 1].step_orig = im->step;
@@ -3837,15 +4433,23 @@ int gdes_alloc(
     im->gdes[im->gdes_c - 1].col.green = 0.0;
     im->gdes[im->gdes_c - 1].col.blue = 0.0;
     im->gdes[im->gdes_c - 1].col.alpha = 0.0;
+    im->gdes[im->gdes_c - 1].col2.red = DNAN;
+    im->gdes[im->gdes_c - 1].col2.green = DNAN;
+    im->gdes[im->gdes_c - 1].col2.blue = DNAN;
+    im->gdes[im->gdes_c - 1].col2.alpha = 0.0;
+    im->gdes[im->gdes_c - 1].gradheight = 50.0;
     im->gdes[im->gdes_c - 1].legend[0] = '\0';
     im->gdes[im->gdes_c - 1].format[0] = '\0';
     im->gdes[im->gdes_c - 1].strftm = 0;
+    im->gdes[im->gdes_c - 1].vformatter = VALUE_FORMATTER_NUMERIC;
     im->gdes[im->gdes_c - 1].rrd[0] = '\0';
     im->gdes[im->gdes_c - 1].ds = -1;
     im->gdes[im->gdes_c - 1].cf_reduce = CF_AVERAGE;
+    im->gdes[im->gdes_c - 1].cf_reduce_set = 0;
     im->gdes[im->gdes_c - 1].cf = CF_AVERAGE;
     im->gdes[im->gdes_c - 1].yrule = DNAN;
     im->gdes[im->gdes_c - 1].xrule = 0;
+    im->gdes[im->gdes_c - 1].daemon[0] = 0;
     return 0;
 }
 
@@ -3901,9 +4505,7 @@ int rrd_graph(
                 return 0;
             }
             /* imginfo goes to position 0 in the prdata array */
-            (*prdata)[prlines - 1] = (char*)malloc((strlen(walker->value.u_str)
-                                             + 2) * sizeof(char));
-            strcpy((*prdata)[prlines - 1], walker->value.u_str);
+            (*prdata)[prlines - 1] = strdup(walker->value.u_str);
             (*prdata)[prlines] = NULL;
         }
         /* skip anything else */
@@ -3931,10 +4533,8 @@ int rrd_graph(
                 rrd_set_error("realloc prdata");
                 return 0;
             }
-            (*prdata)[prlines - 1] = (char*)malloc((strlen(walker->value.u_str)
-                                             + 2) * sizeof(char));
+            (*prdata)[prlines - 1] = strdup(walker->value.u_str);
             (*prdata)[prlines] = NULL;
-            strcpy((*prdata)[prlines - 1], walker->value.u_str);
         } else if (strcmp(walker->key, "image") == 0) {
             if ( fwrite(walker->value.u_blo.ptr, walker->value.u_blo.size, 1,
                    (stream ? stream : stdout)) == 0 && ferror(stream ? stream : stdout)){
@@ -3949,54 +4549,47 @@ int rrd_graph(
     return 0;
 }
 
-
 /* Some surgery done on this function, it became ridiculously big.
 ** Things moved:
 ** - initializing     now in rrd_graph_init()
 ** - options parsing  now in rrd_graph_options()
 ** - script parsing   now in rrd_graph_script()
 */
+
 rrd_info_t *rrd_graph_v(
     int argc,
     char **argv)
 {
     image_desc_t im;
     rrd_info_t *grinfo;
-    char *old_locale;
+    struct optparse options;
     rrd_graph_init(&im);
     /* a dummy surface so that we can measure text sizes for placements */
-    old_locale = setlocale(LC_NUMERIC, NULL);
-    setlocale(LC_NUMERIC, "C");
-    rrd_graph_options(argc, argv, &im);
+    rrd_graph_options(argc, argv, &options, &im);
     if (rrd_test_error()) {
         rrd_info_free(im.grinfo);
         im_free(&im);
         return NULL;
     }
 
-    if (optind >= argc) {
+    if (options.optind >= options.argc) {
         rrd_info_free(im.grinfo);
         im_free(&im);
         rrd_set_error("missing filename");
         return NULL;
     }
 
-    if (strlen(argv[optind]) >= MAXPATH) {
-        rrd_set_error("filename (including path) too long");
-        rrd_info_free(im.grinfo);
-        im_free(&im);
-        return NULL;
-    }
+    if (strcmp(options.argv[options.optind], "-") != 0) {
+        im.graphfile = strdup(options.argv[options.optind]);
+        if (im.graphfile == NULL) {
+            rrd_set_error("cannot allocate sufficient memory for filename length");
+            rrd_info_free(im.grinfo);
+            im_free(&im);
+            return NULL;
+        }
+    } /* else we work in memory: im.graphfile==NULL */
 
-    strncpy(im.graphfile, argv[optind], MAXPATH - 1);
-    im.graphfile[MAXPATH - 1] = '\0';
-
-    if (strcmp(im.graphfile, "-") == 0) {
-        im.graphfile[0] = '\0';
-    }
-
-    rrd_graph_script(argc, argv, &im, 1);
-    setlocale(LC_NUMERIC, old_locale); /* reenable locale for rendering the graph */
+    rrd_graph_script(options.argc, options.argv, &im, options.optind+1);
 
     if (rrd_test_error()) {
         rrd_info_free(im.grinfo);
@@ -4005,25 +4598,32 @@ rrd_info_t *rrd_graph_v(
     }
 
     /* Everything is now read and the actual work can start */
-
     if (graph_paint(&im) == -1) {
-        rrd_info_free(im.grinfo);
-        im_free(&im);
-        return NULL;
+      rrd_info_free(im.grinfo);
+      im_free(&im);
+      return NULL;
     }
-
 
     /* The image is generated and needs to be output.
      ** Also, if needed, print a line with information about the image.
      */
 
-    if (im.imginfo) {
+    if (im.imginfo && *im.imginfo) {
         rrd_infoval_t info;
-        char     *path;
+        char     *path = NULL;
         char     *filename;
 
-        path = strdup(im.graphfile);
-        filename = basename(path);
+        if (bad_format_imginfo(im.imginfo)) {
+            rrd_info_free(im.grinfo);
+            im_free(&im);
+            return NULL;
+        }
+        if (im.graphfile) {
+            path = strdup(im.graphfile);
+            filename = basename(path);
+        } else {
+            filename = "memory";
+        }
         info.u_str =
             sprintf_alloc(im.imginfo,
                           filename,
@@ -4047,7 +4647,7 @@ rrd_info_t *rrd_graph_v(
 
 static void
 rrd_set_font_desc (
-    image_desc_t *im,int prop,char *font, double size ){
+    image_desc_t *im, int prop, const char *font, double size ){
     if (font){
         strncpy(im->text_prop[prop].font, font, sizeof(text_prop[prop].font) - 1);
         im->text_prop[prop].font[sizeof(text_prop[prop].font) - 1] = '\0';
@@ -4070,13 +4670,19 @@ void rrd_graph_init(
     unsigned int i;
     char     *deffont = getenv("RRD_DEFAULT_FONT");
     static PangoFontMap *fontmap = NULL;
+    static mutex_t fontmap_mutex = MUTEX_INITIALIZER;
     PangoContext *context;
+
+    /* zero the whole structure first */
+    memset(im,0,sizeof(image_desc_t));
 
 #ifdef HAVE_TZSET
     tzset();
 #endif
     im->gdef_map = g_hash_table_new_full(g_str_hash, g_str_equal,g_free,NULL);
-    im->rrd_map = g_hash_table_new_full(g_str_hash, g_str_equal,g_free,NULL);
+	//use of g_free() cause heap damage on windows. Key is allocated by malloc() in sprintf_alloc(), so free() must use
+    im->rrd_map = g_hash_table_new_full(g_str_hash, g_str_equal,free,NULL);
+    im->graph_type = GTYPE_TIME;
     im->base = 1000;
     im->daemon_addr = NULL;
     im->draw_x_grid = 1;
@@ -4114,14 +4720,15 @@ void rrd_graph_init(
     im->step = 0;
     im->symbol = ' ';
     im->tabwidth = 40.0;
-    im->title[0] = '\0';
+    im->title = NULL;
     im->unitsexponent = 9999;
     im->unitslength = 6;
     im->viewfactor = 1.0;
-    im->watermark[0] = '\0';
+    im->watermark = NULL;
+    im->xlab_form = NULL;
     im->with_markup = 0;
     im->ximg = 0;
-    im->xlab_user.minsec = -1;
+    im->xlab_user.minsec = -1.0;
     im->xorigin = 0;
     im->xOriginLegend = 0;
     im->xOriginLegendY = 0;
@@ -4130,11 +4737,14 @@ void rrd_graph_init(
     im->xsize = 400;
     im->ygridstep = DNAN;
     im->yimg = 0;
-    im->ylegend[0] = '\0';
+    im->ylegend = NULL;
     im->second_axis_scale = 0; /* 0 disables it */
     im->second_axis_shift = 0; /* no shift by default */
-    im->second_axis_legend[0] = '\0';
-    im->second_axis_format[0] = '\0';
+    im->second_axis_legend = NULL;
+    im->second_axis_format = NULL;
+    im->second_axis_formatter = VALUE_FORMATTER_NUMERIC;
+    im->primary_axis_format = NULL;
+    im->primary_axis_formatter = VALUE_FORMATTER_NUMERIC;
     im->yorigin = 0;
     im->yOriginLegend = 0;
     im->yOriginLegendY = 0;
@@ -4145,19 +4755,25 @@ void rrd_graph_init(
 
     im->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 10, 10);
     im->cr = cairo_create(im->surface);
+    im->fontmap_mutex = &fontmap_mutex;
 
     for (i = 0; i < DIM(text_prop); i++) {
         im->text_prop[i].size = -1;
         im->text_prop[i].font_desc = NULL;
-        rrd_set_font_desc(im,i, deffont ? deffont : text_prop[i].font,text_prop[i].size);
+        rrd_set_font_desc(im, i, deffont ? deffont : text_prop[i].font, text_prop[i].size);
     }
+
+    mutex_lock(im->fontmap_mutex);
 
     if (fontmap == NULL){
-        fontmap = pango_cairo_font_map_get_default();
+        fontmap = pango_cairo_font_map_new();
     }
 
+#ifdef HAVE_PANGO_FONT_MAP_CREATE_CONTEXT
+    context =  pango_font_map_create_context((PangoFontMap*)fontmap);
+#else
     context =  pango_cairo_font_map_create_context((PangoCairoFontMap*)fontmap);
-
+#endif
     pango_cairo_context_set_resolution(context, 100);
 
     pango_cairo_update_context(im->cr,context);
@@ -4174,7 +4790,7 @@ void rrd_graph_init(
         (im->font_options, CAIRO_HINT_METRICS_ON);
     cairo_font_options_set_antialias(im->font_options, CAIRO_ANTIALIAS_GRAY);
 
-
+    mutex_unlock(im->fontmap_mutex);
 
     for (i = 0; i < DIM(graph_col); i++)
         im->graph_col[i] = graph_col[i];
@@ -4186,12 +4802,13 @@ void rrd_graph_init(
 void rrd_graph_options(
     int argc,
     char *argv[],
-    image_desc_t
-    *im)
+    struct optparse *poptions,
+    image_desc_t *im)
 {
     int       stroff;
     char     *parsetime_error = NULL;
     char      scan_gtm[12], scan_mtm[12], scan_ltm[12], col_nam[12];
+    char      double_str[41] = {0}, double_str2[41] = {0};
     time_t    start_tmp = 0, end_tmp = 0;
     long      long_tmp;
     rrd_time_value_t start_tv, end_tv;
@@ -4202,77 +4819,77 @@ void rrd_graph_options(
 #define LONGOPT_UNITS_SI 255
 
 /* *INDENT-OFF* */
-    struct option long_options[] = {
-        { "alt-autoscale",      no_argument,       0, 'A'},
-        { "imgformat",          required_argument, 0, 'a'},
-        { "font-smoothing-threshold", required_argument, 0, 'B'},
-        { "base",               required_argument, 0, 'b'},
-        { "color",              required_argument, 0, 'c'},
-        { "full-size-mode",     no_argument,       0, 'D'},
-        { "daemon",             required_argument, 0, 'd'},
-        { "slope-mode",         no_argument,       0, 'E'},
-        { "end",                required_argument, 0, 'e'},
-        { "force-rules-legend", no_argument,       0, 'F'},
-        { "imginfo",            required_argument, 0, 'f'},
-        { "graph-render-mode",  required_argument, 0, 'G'},
-        { "no-legend",          no_argument,       0, 'g'},
-        { "height",             required_argument, 0, 'h'},
-        { "no-minor",           no_argument,       0, 'I'},
-        { "interlaced",         no_argument,       0, 'i'},
-        { "alt-autoscale-min",  no_argument,       0, 'J'},
-        { "only-graph",         no_argument,       0, 'j'},
-        { "units-length",       required_argument, 0, 'L'},
-        { "lower-limit",        required_argument, 0, 'l'},
-        { "alt-autoscale-max",  no_argument,       0, 'M'},
-        { "zoom",               required_argument, 0, 'm'},
-        { "no-gridfit",         no_argument,       0, 'N'},
-        { "font",               required_argument, 0, 'n'},
-        { "logarithmic",        no_argument,       0, 'o'},
-        { "pango-markup",       no_argument,       0, 'P'},
-        { "font-render-mode",   required_argument, 0, 'R'},
-        { "rigid",              no_argument,       0, 'r'},
-        { "step",               required_argument, 0, 'S'},
-        { "start",              required_argument, 0, 's'},
-        { "tabwidth",           required_argument, 0, 'T'},
-        { "title",              required_argument, 0, 't'},
-        { "upper-limit",        required_argument, 0, 'u'},
-        { "vertical-label",     required_argument, 0, 'v'},
-        { "watermark",          required_argument, 0, 'W'},
-        { "width",              required_argument, 0, 'w'},
-        { "units-exponent",     required_argument, 0, 'X'},
-        { "x-grid",             required_argument, 0, 'x'},
-        { "alt-y-grid",         no_argument,       0, 'Y'},
-        { "y-grid",             required_argument, 0, 'y'},
-        { "lazy",               no_argument,       0, 'z'},
-        { "units",              required_argument, 0, LONGOPT_UNITS_SI},
-        { "alt-y-mrtg",         no_argument,       0, 1000},    /* this has no effect it is just here to save old apps from crashing when they use it */
-        { "disable-rrdtool-tag",no_argument,       0, 1001},
-        { "right-axis",         required_argument, 0, 1002},
-        { "right-axis-label",   required_argument, 0, 1003},
-        { "right-axis-format",  required_argument, 0, 1004},
-        { "legend-position",    required_argument, 0, 1005},
-        { "legend-direction",   required_argument, 0, 1006},
-        { "border",             required_argument, 0, 1007},
-        { "grid-dash",          required_argument, 0, 1008},
-        { "dynamic-labels",     no_argument,       0, 1009},
-        {  0, 0, 0, 0}
+    struct optparse_long longopts[] = {
+        {"alt-autoscale",      'A', OPTPARSE_NONE},
+        {"imgformat",          'a', OPTPARSE_REQUIRED},
+        {"font-smoothing-threshold", 'B', OPTPARSE_REQUIRED},
+        {"base",               'b', OPTPARSE_REQUIRED},
+        {"color",              'c', OPTPARSE_REQUIRED},
+        {"full-size-mode",     'D', OPTPARSE_NONE},
+        {"daemon",             'd', OPTPARSE_REQUIRED},
+        {"slope-mode",         'E', OPTPARSE_NONE},
+        {"end",                'e', OPTPARSE_REQUIRED},
+        {"force-rules-legend", 'F', OPTPARSE_NONE},
+        {"imginfo",            'f', OPTPARSE_REQUIRED},
+        {"graph-render-mode",  'G', OPTPARSE_REQUIRED},
+        {"no-legend",          'g', OPTPARSE_NONE},
+        {"height",             'h', OPTPARSE_REQUIRED},
+        {"no-minor",           'I', OPTPARSE_NONE},
+        {"interlaced",         'i', OPTPARSE_NONE},
+        {"alt-autoscale-min",  'J', OPTPARSE_NONE},
+        {"only-graph",         'j', OPTPARSE_NONE},
+        {"units-length",       'L', OPTPARSE_REQUIRED},
+        {"lower-limit",        'l', OPTPARSE_REQUIRED},
+        {"alt-autoscale-max",  'M', OPTPARSE_NONE},
+        {"zoom",               'm', OPTPARSE_REQUIRED},
+        {"no-gridfit",         'N', OPTPARSE_NONE},
+        {"font",               'n', OPTPARSE_REQUIRED},
+        {"logarithmic",        'o', OPTPARSE_NONE},
+        {"pango-markup",       'P', OPTPARSE_NONE},
+        {"font-render-mode",   'R', OPTPARSE_REQUIRED},
+        {"rigid",              'r', OPTPARSE_NONE},
+        {"step",               'S', OPTPARSE_REQUIRED},
+        {"start",              's', OPTPARSE_REQUIRED},
+        {"tabwidth",           'T', OPTPARSE_REQUIRED},
+        {"title",              't', OPTPARSE_REQUIRED},
+        {"upper-limit",        'u', OPTPARSE_REQUIRED},
+        {"vertical-label",     'v', OPTPARSE_REQUIRED},
+        {"watermark",          'W', OPTPARSE_REQUIRED},
+        {"width",              'w', OPTPARSE_REQUIRED},
+        {"units-exponent",     'X', OPTPARSE_REQUIRED},
+        {"x-grid",             'x', OPTPARSE_REQUIRED},
+        {"alt-y-grid",         'Y', OPTPARSE_NONE},
+        {"y-grid",             'y', OPTPARSE_REQUIRED},
+        {"lazy",               'z', OPTPARSE_NONE},
+        {"use-nan-for-all-missing-data", 'Z', OPTPARSE_NONE},
+        {"units",              LONGOPT_UNITS_SI, OPTPARSE_REQUIRED},
+        {"alt-y-mrtg",         1000, OPTPARSE_NONE},    /* this has no effect it is just here to save old apps from crashing when they use it */
+        {"disable-rrdtool-tag",1001, OPTPARSE_NONE},
+        {"right-axis",         1002, OPTPARSE_REQUIRED},
+        {"right-axis-label",   1003, OPTPARSE_REQUIRED},
+        {"right-axis-format",  1004, OPTPARSE_REQUIRED},
+        {"legend-position",    1005, OPTPARSE_REQUIRED},
+        {"legend-direction",   1006, OPTPARSE_REQUIRED},
+        {"border",             1007, OPTPARSE_REQUIRED},
+        {"grid-dash",          1008, OPTPARSE_REQUIRED},
+        {"dynamic-labels",     1009, OPTPARSE_NONE},
+        {"week-fmt",           1010, OPTPARSE_REQUIRED},
+        {"graph-type",         1011, OPTPARSE_REQUIRED},
+        {"left-axis-format",   1012, OPTPARSE_REQUIRED},
+        {"left-axis-formatter",1013, OPTPARSE_REQUIRED},
+        {"right-axis-formatter",1014, OPTPARSE_REQUIRED},
+        {0}
 };
 /* *INDENT-ON* */
+    int       opt;
 
-    optind = 0;
-    opterr = 0;         /* initialize getopt */
     rrd_parsetime("end-24h", &start_tv);
     rrd_parsetime("now", &end_tv);
-    while (1) {
-        int       option_index = 0;
-        int       opt;
+    
+    optparse_init(poptions, argc, argv);
+    while ((opt = optparse_long(poptions, longopts, NULL)) != -1) {
         int       col_start, col_end;
 
-        opt = getopt_long(argc, argv,
-                          "Aa:B:b:c:Dd:Ee:Ff:G:gh:IiJjL:l:Mm:Nn:oPR:rS:s:T:t:u:v:W:w:X:x:Yy:z",
-                          long_options, &option_index);
-        if (opt == EOF)
-            break;
         switch (opt) {
         case 'I':
             im->extra_flags |= NOMINOR;
@@ -4295,27 +4912,32 @@ void rrd_graph_options(
         case 'g':
             im->extra_flags |= NOLEGEND;
             break;
+        case 'Z':
+            im->extra_flags |= ALLOW_MISSING_DS;
+            break;
         case 1005:
-            if (strcmp(optarg, "north") == 0) {
+            if (strcmp(poptions->optarg, "north") == 0) {
                 im->legendposition = NORTH;
-            } else if (strcmp(optarg, "west") == 0) {
+            } else if (strcmp(poptions->optarg, "west") == 0) {
                 im->legendposition = WEST;
-            } else if (strcmp(optarg, "south") == 0) {
+            } else if (strcmp(poptions->optarg, "south") == 0) {
                 im->legendposition = SOUTH;
-            } else if (strcmp(optarg, "east") == 0) {
+            } else if (strcmp(poptions->optarg, "east") == 0) {
                 im->legendposition = EAST;
             } else {
-                rrd_set_error("unknown legend-position '%s'", optarg);
+                rrd_set_error("unknown legend-position '%s'", poptions->optarg);
                 return;
             }
             break;
         case 1006:
-            if (strcmp(optarg, "topdown") == 0) {
+            if (strcmp(poptions->optarg, "topdown") == 0) {
                 im->legenddirection = TOP_DOWN;
-            } else if (strcmp(optarg, "bottomup") == 0) {
+            } else if (strcmp(poptions->optarg, "bottomup") == 0) {
                 im->legenddirection = BOTTOM_UP;
+            } else if (strcmp(poptions->optarg, "bottomup2") == 0) {
+                im->legenddirection = BOTTOM_UP2;
             } else {
-                rrd_set_error("unknown legend-position '%s'", optarg);
+                rrd_set_error("unknown legend-position '%s'", poptions->optarg);
                 return;
             }
             break;
@@ -4330,25 +4952,26 @@ void rrd_graph_options(
                 rrd_set_error("--units can only be used once!");
                 return;
             }
-            if (strcmp(optarg, "si") == 0)
+            if (strcmp(poptions->optarg, "si") == 0)
                 im->extra_flags |= FORCE_UNITS_SI;
             else {
-                rrd_set_error("invalid argument for --units: %s", optarg);
+                rrd_set_error("invalid argument for --units: %s", poptions->optarg);
                 return;
             }
             break;
         case 'X':
-            im->unitsexponent = atoi(optarg);
+            im->unitsexponent = atoi(poptions->optarg);
             break;
         case 'L':
-            im->unitslength = atoi(optarg);
+            im->unitslength = atoi(poptions->optarg);
             im->forceleftspace = 1;
             break;
         case 'T':
-            im->tabwidth = atof(optarg);
+            if (rrd_strtodbl(poptions->optarg, 0, &(im->tabwidth), "option -T") != 2)
+                return;
             break;
         case 'S':
-            im->step = atoi(optarg);
+            im->step = atoi(poptions->optarg);
             break;
         case 'N':
             im->gridfit = 0;
@@ -4357,23 +4980,23 @@ void rrd_graph_options(
             im->with_markup = 1;
             break;
         case 's':
-            if ((parsetime_error = rrd_parsetime(optarg, &start_tv))) {
+            if ((parsetime_error = rrd_parsetime(poptions->optarg, &start_tv)) != 0) {
                 rrd_set_error("start time: %s", parsetime_error);
                 return;
             }
             break;
         case 'e':
-            if ((parsetime_error = rrd_parsetime(optarg, &end_tv))) {
+            if ((parsetime_error = rrd_parsetime(poptions->optarg, &end_tv)) != 0) {
                 rrd_set_error("end time: %s", parsetime_error);
                 return;
             }
             break;
         case 'x':
-            if (strcmp(optarg, "none") == 0) {
+            if (strcmp(poptions->optarg, "none") == 0) {
                 im->draw_x_grid = 0;
                 break;
             };
-            if (sscanf(optarg,
+            if (sscanf(poptions->optarg,
                        "%10[A-Z]:%ld:%10[A-Z]:%ld:%10[A-Z]:%ld:%ld:%n",
                        scan_gtm,
                        &im->xlab_user.gridst,
@@ -4382,9 +5005,11 @@ void rrd_graph_options(
                        scan_ltm,
                        &im->xlab_user.labst,
                        &im->xlab_user.precis, &stroff) == 7 && stroff != 0) {
-                strncpy(im->xlab_form, optarg + stroff,
-                        sizeof(im->xlab_form) - 1);
-                im->xlab_form[sizeof(im->xlab_form) - 1] = '\0';
+				im->xlab_form=strdup(poptions->optarg + stroff);
+				if (!im->xlab_form) {
+                    rrd_set_error("cannot allocate memory for xlab_form");
+                    return;
+				}
                 if ((int)
                     (im->xlab_user.gridtm = tmt_conv(scan_gtm)) == -1) {
                     rrd_set_error("unknown keyword %s", scan_gtm);
@@ -4399,20 +5024,22 @@ void rrd_graph_options(
                     rrd_set_error("unknown keyword %s", scan_ltm);
                     return;
                 }
-                im->xlab_user.minsec = 1;
-                im->xlab_user.stst = im->xlab_form;
+                im->xlab_user.minsec = 1.0;
+                im->xlab_user.stst = im->xlab_form ? im->xlab_form : "";
             } else {
                 rrd_set_error("invalid x-grid format");
                 return;
             }
             break;
         case 'y':
-
-            if (strcmp(optarg, "none") == 0) {
+            if (strcmp(poptions->optarg, "none") == 0) {
                 im->draw_y_grid = 0;
                 break;
             };
-            if (sscanf(optarg, "%lf:%d", &im->ygridstep, &im->ylabfact) == 2) {
+            if (sscanf(poptions->optarg, "%40[0-9.e+-]:%d", double_str , &im->ylabfact) == 2) {
+                if (rrd_strtodbl( double_str, 0, &(im->ygridstep), "option -y") != 2){
+                    return;
+                }
                 if (im->ygridstep <= 0) {
                     rrd_set_error("grid step must be > 0");
                     return;
@@ -4426,26 +5053,37 @@ void rrd_graph_options(
             }
             break;
         case 1007:
-            im->draw_3d_border = atoi(optarg);
+            im->draw_3d_border = atoi(poptions->optarg);
             break;
         case 1008: /* grid-dash */
-            if(sscanf(optarg,
-                      "%lf:%lf",
-                      &im->grid_dash_on,
-                      &im->grid_dash_off) != 2) {
-                rrd_set_error("expected grid-dash format float:float");
-                return;
+            if(sscanf(poptions->optarg,
+                      "%40[0-9.e+-]:%40[0-9.e+-]",
+                      double_str,
+                      double_str2 ) == 2) {
+                if ( rrd_strtodbl( double_str, 0, &(im->grid_dash_on),NULL) !=2
+                     || rrd_strtodbl( double_str2, 0, &(im->grid_dash_off), NULL) != 2 ){
+                    rrd_set_error("expected grid-dash format float:float");
+                    return;
+                }
+            } else {
+                    rrd_set_error("invalid grid-dash format");
+                    return;
             }
-            break;   
+            break;
         case 1009: /* enable dynamic labels */
             im->dynamic_labels = 1;
-            break;         
+            break;
+        case 1010:
+            strncpy(week_fmt, poptions->optarg, sizeof week_fmt);
+            week_fmt[(sizeof week_fmt)-1]='\0';
+            break;
         case 1002: /* right y axis */
-
-            if(sscanf(optarg,
-                      "%lf:%lf",
-                      &im->second_axis_scale,
-                      &im->second_axis_shift) == 2) {
+            if(sscanf(poptions->optarg,
+                      "%40[0-9.e+-]:%40[0-9.e+-]",
+                      double_str,
+                      double_str2 ) == 2
+                && rrd_strtodbl( double_str, 0, &(im->second_axis_scale),NULL) == 2
+                && rrd_strtodbl( double_str2, 0, &(im->second_axis_shift),NULL) == 2){
                 if(im->second_axis_scale==0){
                     rrd_set_error("the second_axis_scale  must not be 0");
                     return;
@@ -4456,29 +5094,69 @@ void rrd_graph_options(
             }
             break;
         case 1003:
-            strncpy(im->second_axis_legend,optarg,150);
-            im->second_axis_legend[150]='\0';
-            break;
-        case 1004:
-            if (bad_format(optarg)){
-                rrd_set_error("use either %le or %lf formats");
+            im->second_axis_legend=strdup(poptions->optarg);
+            if (!im->second_axis_legend) {
+                rrd_set_error("cannot allocate memory for second_axis_legend");
                 return;
             }
-            strncpy(im->second_axis_format,optarg,150);
-            im->second_axis_format[150]='\0';
+            break;
+        case 1004:
+            im->second_axis_format=strdup(poptions->optarg);
+            if (!im->second_axis_format) {
+                rrd_set_error("cannot allocate memory for second_axis_format");
+                return;
+            }
+            break;
+        case 1012:
+            im->primary_axis_format=strdup(poptions->optarg);
+            if (!im->primary_axis_format) {
+                rrd_set_error("cannot allocate memory for primary_axis_format");
+                return;
+            }
+            break;
+        case 1013:
+            if (!strcmp(poptions->optarg, "numeric")) {
+                im->primary_axis_formatter = VALUE_FORMATTER_NUMERIC;
+            } else if (!strcmp(poptions->optarg, "timestamp")) {
+                im->primary_axis_formatter = VALUE_FORMATTER_TIMESTAMP;
+            } else if (!strcmp(poptions->optarg, "duration")) {
+                im->primary_axis_formatter = VALUE_FORMATTER_DURATION;
+            } else {
+                rrd_set_error("Unknown left axis formatter");
+                return;
+            }
+            break;
+        case 1014:
+            if (!strcmp(poptions->optarg, "numeric")) {
+                im->second_axis_formatter = VALUE_FORMATTER_NUMERIC;
+            } else if (!strcmp(poptions->optarg, "timestamp")) {
+                im->second_axis_formatter = VALUE_FORMATTER_TIMESTAMP;
+            } else if (!strcmp(poptions->optarg, "duration")) {
+                im->second_axis_formatter = VALUE_FORMATTER_DURATION;
+            } else {
+                rrd_set_error("Unknown right axis formatter");
+                return;
+            }
             break;
         case 'v':
-            strncpy(im->ylegend, optarg, 150);
-            im->ylegend[150] = '\0';
+            im->ylegend=strdup(poptions->optarg);
+            if (!im->ylegend) {
+                rrd_set_error("cannot allocate memory for ylegend");
+                return;
+            }
             break;
         case 'u':
-            im->maxval = atof(optarg);
+            if (rrd_strtodbl(poptions->optarg, 0, &(im->maxval), "option -u") != 2){
+                return;
+            }
             break;
         case 'l':
-            im->minval = atof(optarg);
+            if (rrd_strtodbl(poptions->optarg, 0, &(im->minval), "option -l") != 2){
+                return;
+            }
             break;
         case 'b':
-            im->base = atol(optarg);
+            im->base = atol(poptions->optarg);
             if (im->base != 1024 && im->base != 1000) {
                 rrd_set_error
                     ("the only sensible value for base apart from 1000 is 1024");
@@ -4486,7 +5164,7 @@ void rrd_graph_options(
             }
             break;
         case 'w':
-            long_tmp = atol(optarg);
+            long_tmp = atol(poptions->optarg);
             if (long_tmp < 10) {
                 rrd_set_error("width below 10 pixels");
                 return;
@@ -4494,7 +5172,7 @@ void rrd_graph_options(
             im->xsize = long_tmp;
             break;
         case 'h':
-            long_tmp = atol(optarg);
+            long_tmp = atol(poptions->optarg);
             if (long_tmp < 10) {
                 rrd_set_error("height below 10 pixels");
                 return;
@@ -4511,12 +5189,19 @@ void rrd_graph_options(
             im->rigid = 1;
             break;
         case 'f':
-            im->imginfo = optarg;
+            im->imginfo = poptions->optarg;
             break;
         case 'a':
             if ((int)
-                (im->imgformat = if_conv(optarg)) == -1) {
-                rrd_set_error("unsupported graphics format '%s'", optarg);
+                (im->imgformat = if_conv(poptions->optarg)) == -1) {
+                rrd_set_error("unsupported graphics format '%s'", poptions->optarg);
+                return;
+            }
+            break;
+        case 1011:
+            if ((int)
+                (im->graph_type = type_conv(poptions->optarg)) == -1) {
+                rrd_set_error("unsupported graphics type '%s'", poptions->optarg);
                 return;
             }
             break;
@@ -4530,7 +5215,7 @@ void rrd_graph_options(
             im->logarithmic = 1;
             break;
         case 'c':
-            if (sscanf(optarg,
+            if (sscanf(poptions->optarg,
                        "%10[A-Z]#%n%8lx%n",
                        col_nam, &col_start, &color, &col_end) == 2) {
                 int       ci;
@@ -4580,7 +5265,8 @@ void rrd_graph_options(
             double    size = 1;
             int       end;
 
-            if (sscanf(optarg, "%10[A-Z]:%lf%n", prop, &size, &end) >= 2) {
+            if (sscanf(poptions->optarg, "%10[A-Z]:%40[0-9.e+-]%n", prop, double_str, &end) >= 2
+                && rrd_strtodbl( double_str, 0, &size, NULL) == 2) {
                 int       sindex, propidx;
 
                 if ((sindex = text_prop_conv(prop)) != -1) {
@@ -4589,13 +5275,13 @@ void rrd_graph_options(
                         if (size > 0) {
                             rrd_set_font_desc(im,propidx,NULL,size);
                         }
-                        if ((int) strlen(optarg) > end+2) {
-                            if (optarg[end] == ':') {
-                                rrd_set_font_desc(im,propidx,optarg + end + 1,0);
+                        if ((int) strlen(poptions->optarg) > end+2) {
+                            if (poptions->optarg[end] == ':') {
+                                rrd_set_font_desc(im, propidx, poptions->optarg+end+1, 0);
                             } else {
                                 rrd_set_error
                                     ("expected : after font size in '%s'",
-                                     optarg);
+                                     poptions->optarg);
                                 return;
                             }
                         }
@@ -4615,53 +5301,61 @@ void rrd_graph_options(
             break;
         }
         case 'm':
-            im->zoom = atof(optarg);
+            if (rrd_strtodbl(poptions->optarg, 0, &(im->zoom), "option -m") != 2){
+                return;
+            }
             if (im->zoom <= 0.0) {
                 rrd_set_error("zoom factor must be > 0");
                 return;
             }
             break;
         case 't':
-            strncpy(im->title, optarg, 150);
-            im->title[150] = '\0';
+            im->title=strdup(poptions->optarg);
+            if (!im->title) {
+                rrd_set_error("cannot allocate memory for title");
+                return;
+            }
             break;
         case 'R':
-            if (strcmp(optarg, "normal") == 0) {
+            if (strcmp(poptions->optarg, "normal") == 0) {
                 cairo_font_options_set_antialias
                     (im->font_options, CAIRO_ANTIALIAS_GRAY);
                 cairo_font_options_set_hint_style
                     (im->font_options, CAIRO_HINT_STYLE_FULL);
-            } else if (strcmp(optarg, "light") == 0) {
+            } else if (strcmp(poptions->optarg, "light") == 0) {
                 cairo_font_options_set_antialias
                     (im->font_options, CAIRO_ANTIALIAS_GRAY);
                 cairo_font_options_set_hint_style
                     (im->font_options, CAIRO_HINT_STYLE_SLIGHT);
-            } else if (strcmp(optarg, "mono") == 0) {
+            } else if (strcmp(poptions->optarg, "mono") == 0) {
                 cairo_font_options_set_antialias
                     (im->font_options, CAIRO_ANTIALIAS_NONE);
                 cairo_font_options_set_hint_style
                     (im->font_options, CAIRO_HINT_STYLE_FULL);
             } else {
-                rrd_set_error("unknown font-render-mode '%s'", optarg);
+                rrd_set_error("unknown font-render-mode '%s'", poptions->optarg);
                 return;
             }
             break;
         case 'G':
-            if (strcmp(optarg, "normal") == 0)
+            if (strcmp(poptions->optarg, "normal") == 0)
                 im->graph_antialias = CAIRO_ANTIALIAS_GRAY;
-            else if (strcmp(optarg, "mono") == 0)
+            else if (strcmp(poptions->optarg, "mono") == 0)
                 im->graph_antialias = CAIRO_ANTIALIAS_NONE;
             else {
-                rrd_set_error("unknown graph-render-mode '%s'", optarg);
+                rrd_set_error("unknown graph-render-mode '%s'", poptions->optarg);
                 return;
             }
             break;
         case 'B':
-            /* not supported curently */
+            /* not supported currently */
             break;
         case 'W':
-            strncpy(im->watermark, optarg, 100);
-            im->watermark[99] = '\0';
+            im->watermark=strdup(poptions->optarg);
+            if (!im->watermark) {
+                rrd_set_error("cannot allocate memory for watermark");
+                return;
+            }
             break;
         case 'd':
         {
@@ -4672,7 +5366,7 @@ void rrd_graph_options(
                 return;
             }
 
-            im->daemon_addr = strdup(optarg);
+            im->daemon_addr = strdup(poptions->optarg);
             if (im->daemon_addr == NULL)
             {
               rrd_set_error("strdup failed");
@@ -4682,23 +5376,46 @@ void rrd_graph_options(
             break;
         }
         case '?':
-            if (optopt != 0)
-                rrd_set_error("unknown option '%c'", optopt);
-            else
-                rrd_set_error("unknown option '%s'", argv[optind - 1]);
+            rrd_set_error("%s", poptions->errmsg);
             return;
         }
-    } /* while (1) */
+    } /* while (opt != -1) */
 
-    {   /* try to connect to rrdcached */
-        int status = rrdc_connect(im->daemon_addr);
-        if (status != 0) return;
-    }
-
+    mutex_lock(im->fontmap_mutex);
     pango_cairo_context_set_font_options(pango_layout_get_context(im->layout), im->font_options);
     pango_layout_context_changed(im->layout);
+    mutex_unlock(im->fontmap_mutex);
 
 
+    if (im->primary_axis_format != NULL && im->primary_axis_format[0] != '\0') {
+        switch(im->primary_axis_formatter) {
+        case VALUE_FORMATTER_NUMERIC:
+            if (bad_format_axis(im->primary_axis_format))
+                return;
+            break;
+        case VALUE_FORMATTER_TIMESTAMP:
+        case VALUE_FORMATTER_DURATION:
+            break;
+        default:
+            rrd_set_error("Unchecked left axis formatter");
+            return;
+        }
+    }
+
+    if (im->second_axis_format != NULL && im->second_axis_format[0] != '\0') {
+        switch(im->second_axis_formatter) {
+        case VALUE_FORMATTER_NUMERIC:
+            if (bad_format_axis(im->second_axis_format))
+                return;
+            break;
+        case VALUE_FORMATTER_TIMESTAMP:
+        case VALUE_FORMATTER_DURATION:
+            break;
+        default:
+            rrd_set_error("Unchecked right axis formatter");
+            return;
+        }
+    }
 
     if (im->logarithmic && im->minval <= 0) {
         rrd_set_error
@@ -4777,55 +5494,54 @@ int rrd_graph_color(
     }
 }
 
+#define OVECCOUNT 30    /* should be a multiple of 3 */
 
-int bad_format(
-    char *fmt)
-{
-    char     *ptr;
-    int       n = 0;
-
-    ptr = fmt;
-    while (*ptr != '\0')
-        if (*ptr++ == '%') {
-
-            /* line cannot end with percent char */
-            if (*ptr == '\0')
-                return 1;
-            /* '%s', '%S' and '%%' are allowed */
-            if (*ptr == 's' || *ptr == 'S' || *ptr == '%')
-                ptr++;
-            /* %c is allowed (but use only with vdef!) */
-            else if (*ptr == 'c') {
-                ptr++;
-                n = 1;
-            }
-
-            /* or else '% 6.2lf' and such are allowed */
-            else {
-                /* optional padding character */
-                if (*ptr == ' ' || *ptr == '+' || *ptr == '-')
-                    ptr++;
-                /* This should take care of 'm.n' with all three optional */
-                while (*ptr >= '0' && *ptr <= '9')
-                    ptr++;
-                if (*ptr == '.')
-                    ptr++;
-                while (*ptr >= '0' && *ptr <= '9')
-                    ptr++;
-                /* Either 'le', 'lf' or 'lg' must follow here */
-                if (*ptr++ != 'l')
-                    return 1;
-                if (*ptr == 'e' || *ptr == 'f' || *ptr == 'g')
-                    ptr++;
-                else
-                    return 1;
-                n++;
-            }
-        }
-
-    return (n != 1);
+static int bad_format_check(const char *pattern, char *fmt) {
+#ifdef HAVE_G_REGEX_NEW
+    GError *gerr = NULL;
+    GRegex *re = g_regex_new(pattern, G_REGEX_EXTENDED, 0, &gerr);
+    GMatchInfo *mi;
+    if (gerr != NULL) {
+        rrd_set_error("cannot compile regular expression: %s (%s)", gerr->message,pattern);
+        return 1;
+    }
+    int m = g_regex_match(re, fmt, 0, &mi);
+    g_match_info_free (mi);
+    g_regex_unref(re);
+#else
+    const char *error;
+    int erroffset;
+    int ovector[OVECCOUNT];
+    pcre *re;
+    re = pcre_compile(pattern,PCRE_EXTENDED,&error,&erroffset,NULL);
+    if (re == NULL){
+        rrd_set_error("cannot compile regular expression: %s (%s)", error,pattern);
+        return 1;
+    }
+    int m = pcre_exec(re,NULL,fmt,(int)strlen(fmt),0,0,ovector,OVECCOUNT);
+    pcre_free(re);
+#endif
+    if (!m) {
+        rrd_set_error("invalid format string '%s' (should match '%s')",fmt,pattern);
+        return 1;
+    }
+    return 0;
 }
 
+#define SAFE_STRING "(?:[^%]+|%%)*"
+
+int bad_format_imginfo(char *fmt){
+    return bad_format_check("^" SAFE_STRING "%s" SAFE_STRING "%lu" SAFE_STRING "%lu" SAFE_STRING "$",fmt);
+}
+#define FLOAT_STRING "%[-+ 0#]?[0-9]*(?:[.][0-9]+)?l[eEfFgG]"
+
+int bad_format_axis(char *fmt){
+    return bad_format_check("^" SAFE_STRING FLOAT_STRING SAFE_STRING "$",fmt);
+}
+
+int bad_format_print(char *fmt){
+    return bad_format_check("^" SAFE_STRING FLOAT_STRING SAFE_STRING "(?:%s)?" SAFE_STRING "$",fmt);
+}
 
 int vdef_parse(
     struct graph_desc_t
@@ -4836,14 +5552,12 @@ int vdef_parse(
      * so the parsing is rather simple.  Change if needed.
      */
     double    param;
-    char      func[30];
+    char      func[30] = {0}, double_str[41] = {0};
     int       n;
 
     n = 0;
-    sscanf(str, "%le,%29[A-Z]%n", &param, func, &n);
-    if (n == (int) strlen(str)) {   /* matched */
-        ;
-    } else {
+    sscanf(str, "%40[0-9.e+-],%29[A-Z]%n", double_str, func, &n);
+    if ( rrd_strtodbl( double_str, NULL, &param, NULL) != 2 ){
         n = 0;
         sscanf(str, "%29[A-Z]%n", func, &n);
         if (n == (int) strlen(str)) {   /* matched */
@@ -4897,6 +5611,7 @@ int vdef_parse(
             gdes->vf.param = param;
             gdes->vf.val = DNAN;    /* undefined */
             gdes->vf.when = 0;  /* undefined */
+            gdes->vf.never = 1;
         } else {
             rrd_set_error
                 ("Parameter '%f' out of range in VDEF '%s'\n",
@@ -4918,6 +5633,7 @@ int vdef_parse(
             gdes->vf.param = DNAN;
             gdes->vf.val = DNAN;
             gdes->vf.when = 0;
+            gdes->vf.never = 1;
         } else {
             rrd_set_error
                 ("Function '%s' needs no parameter in VDEF '%s'\n",
@@ -4963,6 +5679,7 @@ int vdef_calc(
         field = round((dst->vf.param * (double)(steps - 1)) / 100.0);
         dst->vf.val = array[field];
         dst->vf.when = 0;   /* no time component */
+        dst->vf.never = 1;
         free(array);
 #if 0
         for (step = 0; step < steps; step++)
@@ -4996,6 +5713,7 @@ int vdef_calc(
         field = round( dst->vf.param * (double)(nancount - 1) / 100.0);
         dst->vf.val = array[field];
         dst->vf.when = 0;   /* no time component */
+        dst->vf.never = 1;
         free(array);
     }
         break;
@@ -5006,15 +5724,18 @@ int vdef_calc(
         if (step == steps) {
             dst->vf.val = DNAN;
             dst->vf.when = 0;
+            dst->vf.never = 1;
         } else {
             dst->vf.val = data[step * src->ds_cnt];
             dst->vf.when = src->start + (step + 1) * src->step;
+            dst->vf.never = 0;
         }
         while (step != steps) {
             if (finite(data[step * src->ds_cnt])) {
                 if (data[step * src->ds_cnt] > dst->vf.val) {
                     dst->vf.val = data[step * src->ds_cnt];
                     dst->vf.when = src->start + (step + 1) * src->step;
+                    dst->vf.never = 0;
                 }
             }
             step++;
@@ -5037,9 +5758,11 @@ int vdef_calc(
             if (dst->vf.op == VDEF_TOTAL) {
                 dst->vf.val = sum * src->step;
                 dst->vf.when = 0;   /* no time component */
+                dst->vf.never = 1;
             } else if (dst->vf.op == VDEF_AVERAGE) {
                 dst->vf.val = sum / cnt;
                 dst->vf.when = 0;   /* no time component */
+                dst->vf.never = 1;
             } else {
                 average = sum / cnt;
                 sum = 0.0;
@@ -5050,10 +5773,12 @@ int vdef_calc(
                 }
                 dst->vf.val = pow(sum / cnt, 0.5);
                 dst->vf.when = 0;   /* no time component */
+                dst->vf.never = 1;
             };
         } else {
             dst->vf.val = DNAN;
             dst->vf.when = 0;
+            dst->vf.never = 1;
         }
     }
         break;
@@ -5064,15 +5789,18 @@ int vdef_calc(
         if (step == steps) {
             dst->vf.val = DNAN;
             dst->vf.when = 0;
+            dst->vf.never = 1;
         } else {
             dst->vf.val = data[step * src->ds_cnt];
             dst->vf.when = src->start + (step + 1) * src->step;
+            dst->vf.never = 0;
         }
         while (step != steps) {
             if (finite(data[step * src->ds_cnt])) {
                 if (data[step * src->ds_cnt] < dst->vf.val) {
                     dst->vf.val = data[step * src->ds_cnt];
                     dst->vf.when = src->start + (step + 1) * src->step;
+                    dst->vf.never = 0;
                 }
             }
             step++;
@@ -5089,9 +5817,11 @@ int vdef_calc(
         if (step == steps) {    /* all entries were NaN */
             dst->vf.val = DNAN;
             dst->vf.when = 0;
+            dst->vf.never = 1;
         } else {
             dst->vf.val = data[step * src->ds_cnt];
             dst->vf.when = src->start + step * src->step;
+            dst->vf.never = 0;
         }
         break;
     case VDEF_LAST:
@@ -5105,9 +5835,11 @@ int vdef_calc(
         if (step < 0) { /* all entries were NaN */
             dst->vf.val = DNAN;
             dst->vf.when = 0;
+            dst->vf.never = 1;
         } else {
             dst->vf.val = data[step * src->ds_cnt];
             dst->vf.when = src->start + (step + 1) * src->step;
+            dst->vf.never = 0;
         }
         break;
     case VDEF_LSLSLOPE:
@@ -5145,16 +5877,20 @@ int vdef_calc(
             if (dst->vf.op == VDEF_LSLSLOPE) {
                 dst->vf.val = slope;
                 dst->vf.when = 0;
+                dst->vf.never = 1;
             } else if (dst->vf.op == VDEF_LSLINT) {
                 dst->vf.val = y_intercept;
                 dst->vf.when = 0;
+                dst->vf.never = 1;
             } else if (dst->vf.op == VDEF_LSLCORREL) {
                 dst->vf.val = correl;
                 dst->vf.when = 0;
+                dst->vf.never = 1;
             };
         } else {
             dst->vf.val = DNAN;
             dst->vf.when = 0;
+            dst->vf.never = 1;
         }
     }
         break;
@@ -5202,4 +5938,157 @@ void grinfo_push(
     if (im->grinfo == NULL) {
         im->grinfo = im->grinfo_current;
     }
+}
+
+
+void time_clean(
+    char *result,
+    char *format)
+{
+    int       j, jj;
+
+/*     Handling based on
+       - ANSI C99 Specifications                         http://www.open-std.org/jtc1/sc22/wg14/www/docs/n1124.pdf
+       - Single UNIX Specification version 2             http://www.opengroup.org/onlinepubs/007908799/xsh/strftime.html
+       - POSIX:2001/Single UNIX Specification version 3  http://www.opengroup.org/onlinepubs/009695399/functions/strftime.html
+       - POSIX:2008 Specifications                       http://www.opengroup.org/onlinepubs/9699919799/functions/strftime.html
+       Specifications tells
+       "If a conversion specifier is not one of the above, the behavior is undefined."
+
+      C99 tells
+       "A conversion specifier consists of a % character, possibly followed by an E or O modifier character (described below), followed by a character that determines the behavior of the conversion specifier.
+
+      POSIX:2001 tells
+      "A conversion specification consists of a '%' character, possibly followed by an E or O modifier, and a terminating conversion specifier character that determines the conversion specification's behavior."
+
+      POSIX:2008 introduce more complex behavior that are not handled here.
+
+      According to this, this code will replace:
+      - % followed by @ by a %@
+      - % followed by   by a %SPACE
+      - % followed by . by a %.
+      - % followed by % by a %
+      - % followed by t by a TAB
+      - % followed by E then anything by '-'
+      - % followed by O then anything by '-'
+      - % followed by anything else by at least one '-'. More characters may be added to better fit expected output length
+*/
+
+    jj = 0;
+    for(j = 0; (j < FMT_LEG_LEN - 1) && (jj < FMT_LEG_LEN); j++) { /* we don't need to parse the last char */
+        if (format[j] == '%') {
+            if ((format[j+1] == 'E') || (format[j+1] == 'O')) {
+                result[jj++] = '-';
+                j+=2; /* We skip next 2 following char */
+            } else if ((format[j+1] == 'C') || (format[j+1] == 'd') ||
+                       (format[j+1] == 'g') || (format[j+1] == 'H') ||
+                       (format[j+1] == 'I') || (format[j+1] == 'm') ||
+                       (format[j+1] == 'M') || (format[j+1] == 'S') ||
+                       (format[j+1] == 'U') || (format[j+1] == 'V') ||
+                       (format[j+1] == 'W') || (format[j+1] == 'y')) {
+                result[jj++] = '-';
+                if (jj < FMT_LEG_LEN) {
+                    result[jj++] = '-';
+                }
+                j++; /* We skip the following char */
+            } else if (format[j+1] == 'j') {
+                result[jj++] = '-';
+                if (jj < FMT_LEG_LEN - 1) {
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+               }
+                j++; /* We skip the following char */
+            } else if ((format[j+1] == 'G') || (format[j+1] == 'Y')) {
+                /* Assuming Year on 4 digit */
+                result[jj++] = '-';
+                if (jj < FMT_LEG_LEN - 2) {
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                }
+                j++; /* We skip the following char */
+            } else if (format[j+1] == 'R') {
+                result[jj++] = '-';
+                if (jj < FMT_LEG_LEN - 3) {
+                    result[jj++] = '-';
+                    result[jj++] = ':';
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                }
+                j++; /* We skip the following char */
+            } else if (format[j+1] == 'T') {
+                result[jj++] = '-';
+                if (jj < FMT_LEG_LEN - 6) {
+                    result[jj++] = '-';
+                    result[jj++] = ':';
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                    result[jj++] = ':';
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                }
+                j++; /* We skip the following char */
+            } else if (format[j+1] == 'F') {
+                result[jj++] = '-';
+                if (jj < FMT_LEG_LEN - 8) {
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                }
+                j++; /* We skip the following char */
+            } else if (format[j+1] == 'D') {
+                result[jj++] = '-';
+                if (jj < FMT_LEG_LEN - 6) {
+                    result[jj++] = '-';
+                    result[jj++] = '/';
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                    result[jj++] = '/';
+                    result[jj++] = '-';
+                    result[jj++] = '-';
+                }
+                j++; /* We skip the following char */
+            } else if (format[j+1] == 'n') {
+                result[jj++] = '\r';
+                result[jj++] = '\n';
+                j++; /* We skip the following char */
+            } else if (format[j+1] == 't') {
+                result[jj++] = '\t';
+                j++; /* We skip the following char */
+            } else if (format[j+1] == '%') {
+                result[jj++] = '%';
+                j++; /* We skip the following char */
+            } else if (format[j+1] == ' ') {
+                if (jj < FMT_LEG_LEN - 1) {
+                    result[jj++] = '%';
+                    result[jj++] = ' ';
+                }
+                j++; /* We skip the following char */
+            } else if (format[j+1] == '.') {
+                if (jj < FMT_LEG_LEN - 1) {
+                    result[jj++] = '%';
+                    result[jj++] = '.';
+                }
+                j++; /* We skip the following char */
+            } else if (format[j+1] == '@') {
+                if (jj < FMT_LEG_LEN - 1) {
+                    result[jj++] = '%';
+                    result[jj++] = '@';
+                }
+                j++; /* We skip the following char */
+            } else {
+                result[jj++] = '-';
+                j++; /* We skip the following char */
+            }
+        } else {
+                result[jj++] = format[j];
+        }
+    }
+    result[jj] = '\0'; /* We must force the end of the string */
 }

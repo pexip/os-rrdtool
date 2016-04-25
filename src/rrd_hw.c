@@ -1,5 +1,5 @@
 /*****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  *****************************************************************************
  * rrd_hw.c : Support for Holt-Winters Smoothing/ Aberrant Behavior Detection
  *****************************************************************************
@@ -139,6 +139,7 @@ int apply_smoother(
     unsigned long offset;
     FIFOqueue **buffers;
     rrd_value_t *working_average;
+    rrd_value_t *rrd_values_cpy;
     rrd_value_t *baseline;
 
     if (atoi(rrd->stat_head->version) >= 4) {
@@ -209,13 +210,19 @@ int apply_smoother(
         }
     }
 
+    /* as we are working through the value, we have to make sure to not double
+       apply the smoothing after wrapping around. so best is to copy the rrd_values first */
+
+    rrd_values_cpy = (rrd_value_t *) calloc(row_length*row_count, sizeof(rrd_value_t));
+    memcpy(rrd_values_cpy,rrd_values,sizeof(rrd_value_t)*row_length*row_count);
+
     /* compute moving averages */
     for (i = offset; i < row_count + offset; ++i) {
         for (j = 0; j < row_length; ++j) {
             k = MyMod(i, row_count);
             /* add a term to the sum */
-            working_average[j] += rrd_values[k * row_length + j];
-            queue_push(buffers[j], rrd_values[k * row_length + j]);
+            working_average[j] += rrd_values_cpy[k * row_length + j];
+            queue_push(buffers[j], rrd_values_cpy[k * row_length + j]);
 
             /* reset k to be the center of the window */
             k = MyMod(i - offset, row_count);
@@ -234,6 +241,7 @@ int apply_smoother(
         queue_dealloc(buffers[i]);
         baseline[i] /= row_count;
     }
+    free(rrd_values_cpy);
     free(buffers);
     free(working_average);
 
@@ -269,6 +277,8 @@ int apply_smoother(
             (rrd->cdp_prep[offset]).scratch[CDP_hw_intercept].u_val +=
                 baseline[j];
         }
+/* if we are not running on mmap, lets write stuff to disk now */
+#ifndef HAVE_MMAP
         /* flush cdp to disk */
         if (rrd_seek(rrd_file, sizeof(stat_head_t) +
                      rrd->stat_head->ds_cnt * sizeof(ds_def_t) +
@@ -288,6 +298,8 @@ int apply_smoother(
             free(rrd_values);
             return -1;
         }
+#endif
+
     }
 
     /* endif CF_SEASONAL */
@@ -350,7 +362,7 @@ void reset_aberrant_coefficients(
             /* move to first entry of data source for this rra */
             rrd_seek(rrd_file, rra_start + ds_idx * sizeof(rrd_value_t),
                      SEEK_SET);
-            /* entries for the same data source are not contiguous, 
+            /* entries for the same data source are not contiguous,
              * temporal entries are contiguous */
             for (i = 0; i < rrd->rra_def[rra_idx].row_cnt; ++i) {
                 if (rrd_write(rrd_file, &nan_buffer, sizeof(rrd_value_t) * 1)

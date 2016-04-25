@@ -1,7 +1,66 @@
 #####################################
+Major Changes between 1.6.x and 1.6.x
+-------------------------------------
+API
+---
+* librrd_th is gone. librrd is now fully thread-safe
+
+RRD Graph
+---------
+* new CDEF function SMIN: a,b,c,3,SMIN -> min(a,b,c)
+* new CDEF function SMAX: a,b,c,3,SMAX -> max(a,b,c)
+* new CDEF function STDEV: a,b,c,3,STDEV -> stdev(a,b,c)
+* new CDEF function POW: a,b,POW -> a**b
+* new CDEF function PERCENT: a,b,c,95,3,PERCENT -> find 95percentile of a,b,c
+
+#####################################
+Major Changes between 1.4.x and 1.5.x
+-------------------------------------
+
+RRD Graph
+---------
+* Ability to use data from a callback function to supply data
+  for graphs. With perl bindings for writing the callbacks in perl.
+
+* Second color option for AREAs causing a gradient effect
+  by Rian Shelley
+
+* RRDcached awareness. Instead of just flushing the file, data can now
+  be pulled in from remote RRDcached instances.
+
+* VDEF results do now explicitly KNOW when they have no time associated
+  and can behave appropriately. -- Jean-Edouard Babin
+
+RRDcreate
+---------
+Ability to use exiting rrd files to pre-populate new ones. Allowing to
+preserve data even when fundamentally changing the structure of your rrd
+files.
+
+RRDcached
+----------
+* New FETCH command allowing rrd_fetch to operate through the daemon and
+  thus work remotely. By Florian Forster
+
+* New rrd_client commands INFO, FIRST, LAST, CREATE by Steve Shipway
+
+API
+---
+* exported rrd_update_v_r for theadsave rrd_update calls
+
+libDBI
+------
+* make rrdfillmissing actually work. The parameter is now in seconds and not
+  in steps for ease of use by Hans Jørgen Jakobsen
+
+Bindings
+--------
+* dotnet by  Chris Larsen of Euphoria Audio  
+
+
+#####################################
 Major Changes between 1.3.x and 1.4.x
 -------------------------------------
-$Id$
 
 RRD Caching Daemon (rrdcached)
 ------------------------------
@@ -222,7 +281,7 @@ Incompatibilities
   without functionality.
 
 * In pipe mode, rrdtool answers with OK only if it was successful with the
-  command. Otherwhise the answer will be ERROR...
+  command. Otherwise the answer will be ERROR...
 
 
 Behind the Scenes

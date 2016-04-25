@@ -1,11 +1,11 @@
 /*****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  *****************************************************************************
  * rrd_format.h  RRD Database Format header
  *****************************************************************************/
 
-#ifndef _RRD_FORMAT_H
-#define _RRD_FORMAT_H
+#ifndef RRD_FORMAT_H_92768FBD7A3446C58B1097BEE038159D
+#define RRD_FORMAT_H_92768FBD7A3446C58B1097BEE038159D
 
 /* 
  * _RRD_TOOL_H
@@ -15,7 +15,7 @@
  *   User is requesting internal function which need this struct. They have
  *   been told that this will change and have agreed to adapt their programs.
  */
-#if !defined(_RRD_TOOL_H) && !defined(RRD_EXPORT_DEPRECATED)
+#if !defined(RRD_TOOL_H_3853987DDF7E4709A5B5849E5A6204F4) && !defined(RRD_EXPORT_DEPRECATED)
 # error "Do not include rrd_format.h directly. Include rrd.h instead!"
 #endif
 
@@ -33,8 +33,9 @@
 #define RRD_COOKIE    "RRD"
 /* #define RRD_VERSION   "0002" */
 /* changed because microsecond precision requires another field */
-#define RRD_VERSION   "0004"
 #define RRD_VERSION3  "0003"
+#define RRD_VERSION4  "0004"
+#define RRD_VERSION5  "0005"
 #define FLOAT_COOKIE  ((double)8.642135E130)
 
 typedef union unival {
@@ -47,7 +48,7 @@ typedef union unival {
  * The RRD Database Structure
  * ---------------------------
  * 
- * In oder to properly describe the database structure lets define a few
+ * In order to properly describe the database structure lets define a few
  * new words:
  *
  * ds - Data Source (ds) providing input to the database. A Data Source (ds)
@@ -138,7 +139,9 @@ enum dst_en { DST_COUNTER = 0,  /* data source types available */
     DST_ABSOLUTE,
     DST_GAUGE,
     DST_DERIVE,
-    DST_CDEF
+    DST_CDEF,
+    DST_DCOUNTER,
+    DST_DDERIVE
 };
 
 enum ds_param_en { DS_mrhb_cnt = 0, /* minimum required heartbeat. A
@@ -157,9 +160,11 @@ enum ds_param_en { DS_mrhb_cnt = 0, /* minimum required heartbeat. A
 
 /* The magic number here is one less than DS_NAM_SIZE */
 #define DS_NAM_FMT    "%19[a-zA-Z0-9_-]"
+#define DS_NAM_RE     "[-a-zA-Z0-9_]{1,19}"
 #define DS_NAM_SIZE   20
 
 #define DST_FMT    "%19[A-Z]"
+#define DST_FMT_RE "[A-Z]{1,19}"
 #define DST_SIZE   20
 
 typedef struct ds_def_t {
@@ -224,6 +229,9 @@ enum rra_par_en { RRA_cdp_xff_val = 0,  /* what part of the consolidated
      * Holt-Winters prediction (of type CF_HWPREDICT).
      * For CF_FAILURES: index of the CF_DEVSEASONAL array.
      * */
+
+    /* CF_HWPREDICT: */
+    RRA_period = 4,
 
     /* CF_SEASONAL and CF_DEVSEASONAL: */
     RRA_seasonal_gamma = 1,
@@ -313,7 +321,7 @@ typedef struct pdp_prep_t {
 
    * DS updates may only occur at ever increasing points in time
    * When any DS update arrives after a cdp update time, the *previous*
-     update cycle gets executed. All pdps are transfered to cdps and the
+     update cycle gets executed. All pdps are transferred to cdps and the
      cdps feed the rras where necessary. Only then the new DS value
      is loaded into the PDP.                                                   */
 
@@ -338,7 +346,7 @@ enum cdp_par_en { CDP_val = 0,
      * prediction algorithm. */
     CDP_hw_last_intercept,
     /* Last iteration intercept coefficient for the Holt-Winters
-     * prediction algorihtm. */
+     * prediction algorithm. */
     CDP_hw_slope,
     /* Current slope coefficient for the Holt-Winters
      * prediction algorithm. */
@@ -401,6 +409,8 @@ typedef struct rrd_t {
     cdp_prep_t *cdp_prep;   /* cdp prep area */
     rra_ptr_t *rra_ptr; /* list of rra pointers */
     rrd_value_t *rrd_value; /* list of rrd values */
+    void *__mmap_start;	    /* all __ variables will be used internally */
+    long __mmap_size;
 } rrd_t;
 
 /****************************************************************************

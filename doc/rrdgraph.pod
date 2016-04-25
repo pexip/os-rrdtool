@@ -193,6 +193,11 @@ This places grid lines every 8 hours, major grid lines and labels
 each day. The labels are placed exactly between two major grid lines
 as they specify the complete day and not just midnight.
 
+[B<--week-fmt> I<strftime format string>]
+
+By default rrdtool uses "Week %V" to render the week number. With this option
+you can define your own format, without completely overriding the xaxis format.
+
 =head2 Y-Axis
 
 [B<-y>|B<--y-grid> I<grid step>B<:>I<label factor>]
@@ -207,6 +212,36 @@ to automatically select sensible values.
 If you have set --y-grid to 'none' not only the labels get suppressed, also
 the space reserved for the labels is removed. You can still add space
 manually if you use the --units-length command to explicitly reserve space.
+
+[B<--left-axis-formatter> I<formatter-name>]
+
+Specify what formatter to use to render axis values.
+
+=over
+
+=item B<numeric>
+
+The default, values are expressed as numeric quantities.
+
+=item B<timestamp>
+
+Values are interpreted as unix timestamps (number of seconds since 1970-01-01
+00:00:00 UTC) and expressed using strftime format (default
+is '%Y-%m-%d %H:%M:%S'). See also B<--units-length> and B<--left-axis-format>.
+
+=item B<duration>
+
+Values are interpreted as duration in milliseconds. Formatting follows the rules
+of valstrfduration qualified PRINT/GPRINT. See L<rrdgraph_graph>.
+
+=back
+
+[B<--left-axis-format> I<format-string>]
+
+By default the format of the axis labels gets determined automatically. If
+you want to do this your self, use this option with the same %lf arguments
+you know from the PRINT and GPRINT commands, or others if using different
+formatter.
 
 [B<-Y>|B<--alt-y-grid>]
 
@@ -259,11 +294,36 @@ A second axis will be drawn to the right of the graph. It is tied to the
 left axis via the scale and shift parameters. You can also define a label
 for the right axis.
 
+[B<--right-axis-formatter> I<formatter-name>]
+
+Specify what formatter to use to render axis values.
+
+=over
+
+=item B<numeric>
+
+The default, values are expressed as numeric quantities.
+
+=item B<timestamp>
+
+Values are interpreted as unix timestamps (number of seconds since 1970-01-01
+00:00:00 UTC) and expressed using strftime format (default
+is '%Y-%m-%d %H:%M:%S'). See also B<--units-length> and B<--right-axis-format>.
+
+=item B<duration>
+
+Values are interpreted as duration in milliseconds. Formatting follows the rules
+of valstrfduration qualified PRINT/GPRINT. See L<rrdgraph_graph>.
+
+=back
+
+
 [B<--right-axis-format> I<format-string>]
 
 By default the format of the axis labels gets determined automatically. If
 you want to do this your self, use this option with the same %lf arguments
-you know from the PRINT and GPRINT commands.
+you know from the PRINT and GPRINT commands, or others if using different
+formatter.
 
 =head2 Legend
 
@@ -282,11 +342,13 @@ behavior of pre 1.0.42 versions).
 Place the legend at the given side of the graph. The default is south.
 In west or east position it is necessary to add line breaks manually.
 
-[B<--legend-direction>=(topdown|bottomup)]
+[B<--legend-direction>=(topdown|bottomup|bottomup2)]
 
 Place the legend items in the given vertical order. The default is topdown.
 Using bottomup the legend items appear in the same vertical order as a
-stack of lines or areas.
+stack of lines or areas. Using bottomup2 will keep leading and trailing
+COMMENT lines in order, this might be useful for generators that use them
+for table headers and the like.
 
 =head2 Miscellaneous
 
@@ -300,7 +362,7 @@ can really rely on before RRDtool 1.3.7 is that lazy will not generate the
 graph when it is already there and up to date, and also that it will output
 the size of the graph. 
 
-[B<--daemon> I<address>]
+[B<-d>|B<--daemon> I<address>]
 
 Address of the L<rrdcached> daemon. If specified, a C<flush> command is sent
 to the server before reading the RRD files. This allows the graph to contain
@@ -344,7 +406,7 @@ by default the grid is drawn in a 1 on, 1 off pattern. With this option you can 
  
  --grid-dash 1:0    for uninterrupted grid lines
 
-[B<--border> I<width>]]
+[B<--border> I<width>]
 
 Width in pixels for the 3d border drawn around the image. Default 2, 0
 disables the border. See C<SHADEA> and C<SHADEB> above for setting the border
@@ -358,7 +420,7 @@ Pick the shape of the color marker next to the label according to the element dr
 
 Zoom the graphics by the given amount. The factor must be E<gt> 0
 
-[B<-n>|B<--font> I<FONTTAG>B<:>I<size>B<:>[I<font>]]
+[B<-n>|B<--font> I<FONTTAG>B<:>I<size>[B<:>I<font>]]
 
 This lets you customize which font to use for the various text elements on
 the RRD graphs. C<DEFAULT> sets the default value for all elements, C<TITLE>
@@ -415,7 +477,7 @@ no text is rendered bitmapped.
 [B<-P>|B<--pango-markup>]
 
 All text in RRDtool is rendered using Pango. With the B<--pango-markup> option, all
-text will be processed by pango markup. This allows to embed some simple html
+text will be processed by pango markup. This allows one to embed some simple html
 like markup tags using 
 
  <span key="value">text</span>
@@ -448,13 +510,19 @@ RRDtool graphs are composed of stair case curves by default. This is in line wit
 the way RRDtool calculates its data. Some people favor a more 'organic' look
 for their graphs even though it is not all that true.
 
-[B<-a>|B<--imgformat> B<PNG>|B<SVG>|B<EPS>|B<PDF>]
+[B<-a>|B<--imgformat> B<PNG>|B<SVG>|B<EPS>|B<PDF>|B<XML>|B<XMLENUM>|B<JSON>|B<JSONTIME>|B<CSV>|B<TSV>|B<SSV>]
 
 Image format for the generated graph. For the vector formats you can
 choose among the standard Postscript fonts Courier-Bold,
 Courier-BoldOblique, Courier-Oblique, Courier, Helvetica-Bold,
 Helvetica-BoldOblique, Helvetica-Oblique, Helvetica, Symbol,
 Times-Bold, Times-BoldItalic, Times-Italic, Times-Roman, and ZapfDingbats.
+
+For Export type you can define 
+XML, XMLENUM (enummerates the value tags <v0>,<v1>,<v2>,...),
+JSON, JSONTIME (adds a timestamp to each data row),
+CSV (=comma separated values), TSV (=tab separated values), SSV (=semicolon separated values),
+(for comma/tab/semicolon separated values the time format by default is in the form of unix time. to change it to something else use: --x-grid MINUTE:10:HOUR:1:HOUR:4:0:"%Y-%m-%d %H:%M:%S")
 
 [B<-i>|B<--interlaced>]
 
@@ -476,6 +544,12 @@ measurement, 1 kb/s is 1000 b/s.
 
 Adds the given string as a watermark, horizontally centered, at the bottom 
 of the graph.
+
+[B<-Z>|B<--use-nan-for-all-missing-data>]
+
+If one DS is missing, either because the RRD is not available or
+because it does not contain the requested DS name, just assume that we
+got empty values instead of raising a fatal error.
 
 =head2 Data and variables
 
@@ -538,6 +612,11 @@ C<rrdtoolE<nbsp>graph>:
 If this environment variable is set it will have the same effect as specifying
 the C<--daemon> option on the command line. If both are present, the command
 line argument takes precedence.
+
+=item B<RRD_DEFAULT_FONT>
+
+RRDtool comes with a preset default font. You can set the environment variable
+RRD_DEFAULT_FONT if you want to change this.
 
 =back
 

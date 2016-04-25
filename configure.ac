@@ -1,11 +1,11 @@
-dnl RRDtool AutoConf script ... 
+dnl RRDtool AutoConf script ...
 dnl ---------------------------
 dnl $Id$
 dnl
 dnl Created by Jeff Allen, Tobi Oetiker, Blair Zajac
 dnl
 dnl Inspiration from http://autoconf-archive.cryp.to
- 
+
 dnl tell automake the this script is for rrdtool
 
 dnl Minimum Autoconf version required.
@@ -13,14 +13,15 @@ AC_PREREQ(2.59)
 
 dnl the official version number is
 dnl a.b.c
-AC_INIT([rrdtool],[1.4.8])
+AC_INIT([rrdtool],m4_esyscmd([tr -d '\n' < VERSION]))
+AC_CONFIG_AUX_DIR(conftools)
 
-dnl for testing a numberical version number comes handy
+dnl for testing a numerical version number comes handy
 dnl the released version are
 dnl a.bccc
 dnl the devel versions will be something like
-dnl a.b999yymmddhh 
-NUMVERS=1.4008
+dnl a.b999yymmddhh
+NUMVERS=1.6000
 AC_SUBST(NUMVERS)
 
 dnl for the linker to understand which versions the library are compatible with
@@ -30,8 +31,8 @@ dnl - if only functionality was added do c++,r=0,a++
 dnl - if any functionality was removed do c++,r=0,a=0.
 dnl
 dnl see http://sourceware.org/autobook/autobook/autobook_91.html
-dnl 
-LIBVERS=6:1:2
+dnl
+LIBVERS=8:0:0
 AC_SUBST(LIBVERS)
 
 AC_CANONICAL_TARGET
@@ -42,7 +43,7 @@ AM_MAINTAINER_MODE
 # Automake-1.11. Disable by either passing --disable-silent-rules to
 # configure or passing V=1 to make
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
-AC_CONFIG_HEADERS([rrd_config.h])
+AC_CONFIG_HEADERS([src/rrd_config.h])
 AC_CONFIG_MACRO_DIR([m4])
 
 dnl all our local stuff like install scripts and include files
@@ -70,7 +71,7 @@ AH_TOP([
 /* realloc does not support NULL as argument */
 #undef NO_NULL_REALLOC
 
-/* lets enable madvise defines in NetBSD */ 
+/* lets enable madvise defines in NetBSD */
 #if defined(__NetBSD__)
 # if !defined(_NETBSD_SOURCE)
 #  define _NETBSD_SOURCE
@@ -85,7 +86,7 @@ AH_BOTTOM([
 #  include <malloc/malloc.h>
 #endif
 
-#include "src/rrd_config_bottom.h"
+#include "rrd_config_bottom.h"
 
 #endif
 ])
@@ -94,21 +95,41 @@ dnl Process Special Options
 dnl -----------------------------------
 
 dnl How the vertical axis label is printed
-AC_ARG_VAR(RRDGRAPH_YLEGEND_ANGLE, 
+AC_ARG_VAR(RRDGRAPH_YLEGEND_ANGLE,
  [Vertical label angle: -90.0 (default) or 90.0])
 AC_DEFINE_UNQUOTED(RRDGRAPH_YLEGEND_ANGLE,${RRDGRAPH_YLEGEND_ANGLE:-90.0},
  [Vertical label angle: -90.0 (default) or 90.0])
 
+AC_ARG_ENABLE(docs,AS_HELP_STRING([--disable-docs],[disable building documentation]),
+[],[enable_docs=yes])
+
+AC_ARG_ENABLE(examples,AS_HELP_STRING([--disable-examples],[disable building of examples]),
+[],[enable_examples=yes])
+
+AC_ARG_ENABLE(rrdcached,AS_HELP_STRING([--disable-rrdcached],[disable building of rrdcached]),
+[],[enable_rrdcached=yes])
+
 AC_ARG_ENABLE(rrdcgi,AS_HELP_STRING([--disable-rrdcgi],[disable building of rrdcgi]),
 [],[enable_rrdcgi=yes])
 
-AM_CONDITIONAL(BUILD_RRDCGI,[test $enable_rrdcgi != no])
-
 AC_ARG_ENABLE(rrd_graph,AS_HELP_STRING([--disable-rrd_graph],[disable all rrd_graph functions]),
-[enable_rrdcgi=no],[enable_rrd_graph=yes])
+[enable_rrdcgi=$enableval],[enable_rrd_graph=yes])
+
+AC_ARG_ENABLE(rrd_restore,AS_HELP_STRING([--disable-rrd_restore],[disable rrd_restore XML import functions]),
+[],[enable_rrd_restore=yes])
+
+AM_CONDITIONAL(BUILD_DOCS,[test $enable_docs != no])
+AM_CONDITIONAL(BUILD_EXAMPLES,[test $enable_examples != no])
+AM_CONDITIONAL(BUILD_RRDCGI,[test $enable_rrdcgi != no])
+AM_CONDITIONAL(BUILD_RRDCACHED,[test $enable_rrdcached != no])
+
 
 if test $enable_rrd_graph != no; then
  AC_DEFINE([HAVE_RRD_GRAPH], [], [is rrd_graph supported by this install])
+fi
+
+if test $enable_rrd_restore != no; then
+ AC_DEFINE([HAVE_RRD_RESTORE], [], [is rrd_restore supported by this install])
 fi
 
 dnl Check if we run on a system that has fonts
@@ -130,6 +151,14 @@ AS_HELP_STRING([--disable-mmap],[disable mmap in rrd_update, use seek+write inst
 
 AC_ARG_ENABLE(pthread,AS_HELP_STRING([--disable-pthread],[disable multithread support]),
 [],[enable_pthread=yes])
+
+AC_ARG_ENABLE([flock],
+AS_HELP_STRING([--disable-flock],[disable file locking]),
+[],
+[enable_flock=yes])
+if test x$enable_flock != xyes; then
+    AC_DEFINE([DISABLE_FLOCK], [], [disable flock calls in rrdtool])
+fi
 
 AC_ARG_ENABLE(static-programs,
      AS_HELP_STRING([--enable-static-programs],[Build static programs]),
@@ -153,7 +182,7 @@ AC_PROG_LIBTOOL
 dnl Try to detect/use GNU features
 CFLAGS="$CFLAGS -D_GNU_SOURCE"
 
-dnl check for -Werror separatly
+dnl check for -Werror separately
 dnl (quite a few autotool checks do not work with -Werror; also, the
 dnl check for -Werror fails after checking and adding the other flags)
 AC_CACHE_CHECK([if gcc likes the -Werror flag], rd_cv_gcc_flag__Werror,
@@ -182,30 +211,38 @@ if test "x$GCC" = "xyes"; then
   done
 fi
 
-
+AC_TYPE_LONG_LONG_INT
 
 AC_SUBST(RRD_DEFAULT_FONT)
 
 CONFIGURE_PART(Checking for Header Files)
- 
+
 dnl Checks for header files.
 AC_HEADER_STDC
 AC_HEADER_DIRENT
-AC_CHECK_HEADERS(langinfo.h stdint.h inttypes.h libgen.h features.h sys/stat.h sys/types.h fcntl.h fp_class.h malloc.h unistd.h ieeefp.h math.h sys/times.h sys/param.h sys/resource.h signal.h float.h stdio.h stdlib.h errno.h string.h ctype.h)
+AC_CHECK_HEADERS(langinfo.h stdint.h inttypes.h libgen.h features.h sys/stat.h sys/types.h fcntl.h fp_class.h malloc.h unistd.h ieeefp.h math.h sys/times.h sys/param.h sys/resource.h signal.h float.h stdio.h stdlib.h errno.h string.h ctype.h grp.h pwd.h)
 
 dnl Checks for typedefs, structures, and compiler characteristics.
 AC_C_CONST
 AC_HEADER_TIME
 AC_STRUCT_TM
 
+dnl figure out 'stuff' about
+HW_FUNC_VSNPRINTF
+HW_FUNC_SNPRINTF
+HW_FUNC_VASPRINTF
+HW_FUNC_ASPRINTF
+
 CONFIGURE_PART(Test Library Functions)
 
 dnl Checks for libraries.
-AC_CHECK_FUNC(acos, , AC_CHECK_LIB(m, acos))
+AC_CHECK_FUNC(acos,  , AC_CHECK_LIB(m, acos))
+AC_CHECK_FUNC(round, , AC_CHECK_LIB(m, round))
+
 
 
 dnl add pic flag in any case this makes sure all our code is relocatable
-eval `./libtool --config | grep pic_flag=` 
+eval `./libtool --config | grep pic_flag=`
 CFLAGS="$CFLAGS $pic_flag"
 
 
@@ -215,10 +252,10 @@ AC_FUNC_VPRINTF
 
 AC_C_BIGENDIAN
 
-dnl for each function found we get a definition in config.h 
+dnl for each function found we get a definition in config.h
 dnl of the form HAVE_FUNCTION
 
-AC_CHECK_FUNCS(nl_langinfo tzset round rint fsync mbstowcs opendir readdir chdir chroot getuid strerror snprintf vsnprintf vasprintf fpclass class fp_class isnan memmove strchr mktime getrusage gettimeofday)
+AC_CHECK_FUNCS(nl_langinfo tzset fsync mbstowcs opendir readdir chdir chroot getgid getuid setgid setuid strndup strerror snprintf vsnprintf vasprintf fpclass class fp_class isnan memmove strchr mktime getrusage gettimeofday getpwnam getgrnam get_current_dir_name)
 
 AC_FUNC_STRERROR_R
 
@@ -237,8 +274,7 @@ dnl check for socket and nsl solaris again ... we need this for the new rrd_daem
 
 AC_CHECK_FUNCS(socket, [],  AC_CHECK_LIB(socket, socket, [LIBS="${LIBS} -lsocket"; AC_DEFINE(HAVE_SOCKET)],[]))
 AC_CHECK_FUNCS(getaddrinfo, [],  AC_CHECK_LIB(nsl, getaddrinfo, [LIBS="${LIBS} -lnsl"; AC_DEFINE(HAVE_GETADDRINFO)],[]))
-
-
+AC_CHECK_FUNCS(sigwaitinfo, [],  AC_CHECK_LIB(rt, sigwaitinfo, [LIBS="${LIBS} -lrt"; AC_DEFINE(HAVE_SIGWAITINFO)],[]))
 
 dnl XXX: dunno about windows.. add AC_CHECK_FUNCS(munmap) there too?
 if test "x$enable_mmap" = "xyes"; then
@@ -253,7 +289,7 @@ if test "x$enable_mmap" = "xyes"; then
   *)
     AC_CHECK_HEADERS(sys/mman.h)
     AC_FUNC_MMAP
-    AC_CHECK_FUNCS(mmap munmap msync)
+    AC_CHECK_FUNCS(mmap munmap)
     AC_CHECK_DECLS(madvise, [], [], [#ifdef HAVE_SYS_MMAN_H
 				     # include <sys/mman.h>
 				     #endif])
@@ -289,7 +325,7 @@ AM_GNU_GETTEXT_VERSION(0.17)
 AM_GNU_GETTEXT(external)
 
 CONFIGURE_PART(IEEE Math Checks)
- 
+
 
 dnl actual code to check if this works
 AC_CHECK_FUNCS(fpclassify, ,
@@ -349,13 +385,29 @@ else
           AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <math.h>
 volatile int x;volatile float f;  ]],[[x = isfinite(f)]])],[AC_MSG_RESULT(yes)
 	        AC_DEFINE(HAVE_ISFINITE)],[AC_MSG_RESULT(no)])])])
-fi  
+fi
 
 AC_FULL_IEEE
 
 CONFIGURE_PART(Resolve Portability Issues)
 
 GC_TIMEZONE()
+
+
+AC_CACHE_CHECK(whether sigwait has 2 arguments,
+    ac_cv_libc_sigwait,
+    AC_TRY_COMPILE([
+        #define _POSIX_PTHREAD_SEMANTICS
+        #include <stdio.h>
+        #include <signal.h>],
+        [sigset_t sigs; int signo; sigwait(&sigs, &signo);],
+        AC_DEFINE(HAVE_SIGWAIT,1,[have two argument posix sigwait])
+        AC_MSG_RESULT(yes)
+        ,
+        AC_MSG_RESULT(no)
+    )
+)
+
 
 CHECK_FOR_WORKING_MS_ASYNC
 
@@ -364,30 +416,6 @@ AC_CHECK_FUNCS(_NL_TIME_WEEK_1STDAY, ,
   [AC_MSG_CHECKING([for nl_langinfo(_NL_TIME_WEEK_1STDAY) with langinfo.h])
     AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <langinfo.h>]], [[nl_langinfo(_NL_TIME_WEEK_1STDAY)]])],[AC_MSG_RESULT(yes)
       AC_DEFINE(HAVE__NL_TIME_WEEK_1STDAY)],[AC_MSG_RESULT(no)])])
-
-dnl Do we need getopt_long
-
-dnl even when including our own getopt implementation
-dnl we may want to make sure we use the external
-dnl defined by libc to not run into linker resolve trouble
-
-AC_CACHE_CHECK([for opterr], rd_cv_var_int_opterr,
-[AC_TRY_LINK([#include <unistd.h>],
-  [extern int opterr; opterr = 1;],
-  [rd_cv_var_int_opterr=yes],
-  [rd_cv_var_int_opterr=no])])
-if test x"$rd_cv_var_int_opterr" = x"yes"; then
-  AC_DEFINE(HAVE_INT_OPTERR, 1, [Define to 1 if you have the global variable 'int opterr'.])
-fi
-
-build_getopt=no
-RRD_GETOPT_LONG="LIBC_HAS_GETOPT_LONG"
-AC_CHECK_FUNC(getopt_long,[],[
-RRD_GETOPT_LONG="getopt_long"
-build_getopt=yes
-])
-AC_SUBST(RRD_GETOPT_LONG)
-AM_CONDITIONAL(BUILD_GETOPT,[test $build_getopt = yes])
 
 dnl what does realloc do if it gets called with a NULL pointer
 
@@ -408,39 +436,36 @@ AC_LANG_PUSH(C)
 dnl solaris has some odd defines it needs in order to propperly compile ctime_r
 AC_MSG_CHECKING([if ctime_r need special care to act posixly correct])
 AC_LINK_IFELSE(
-    AC_LANG_PROGRAM(
+    [AC_LANG_PROGRAM(
            [[#include <time.h>]],
-           [[ctime_r(NULL,NULL,0)]]
-                   ),
+           [[ctime_r(NULL,NULL,0)]])],
     [ CPPFLAGS="$CPPFLAGS -D_POSIX_PTHREAD_SEMANTICS"
       AC_LINK_IFELSE(
-          AC_LANG_PROGRAM(
+          [AC_LANG_PROGRAM(
                 [[#include <time.h>]],
-                [[ctime_r(NULL,NULL)]]
-    	                 ),
+                [[ctime_r(NULL,NULL)]])],
           [AC_MSG_RESULT([yes, this seems to be solaris style])],
           [AC_MSG_ERROR([Can't figure how to compile ctime_r])]
       )
-    ],  
+    ],
     [ AC_LINK_IFELSE(
-          AC_LANG_PROGRAM(
+          [AC_LANG_PROGRAM(
                 [[#include <time.h>]],
-                [[ctime_r(NULL,NULL)]]
-    	                 ),
+                [[ctime_r(NULL,NULL)]])],
           [AC_MSG_RESULT(no)],
           [AC_MSG_ERROR([Can't figure how to compile ctime_r])]
       )
-    ]  
+    ]
 )
 AC_LANG_POP(C)
 
 dnl Check for pthreads
 dnl http://autoconf-archive.cryp.to/acx_pthread.m4
- 
+
 AC_SUBST(MULTITHREAD_CFLAGS)
 AC_SUBST(MULTITHREAD_LDFLAGS)
 
-if test $enable_pthread != no; then 
+if test $enable_pthread != no; then
  ACX_PTHREAD([
     MULTITHREAD_CFLAGS=$PTHREAD_CFLAGS
     MULTITHREAD_LDFLAGS=$PTHREAD_LIBS
@@ -461,34 +486,34 @@ AC_LANG_PUSH(C)
 dnl see if we have to include malloc/malloc.h
 AC_MSG_CHECKING([do we need malloc/malloc.h])
 AC_LINK_IFELSE(
-    AC_LANG_PROGRAM(
+    [AC_LANG_PROGRAM(
            [[#include <stdlib.h>]],
-           [[malloc(1)]]
-                   ),
+           [[malloc(1)]])],
     [ AC_MSG_RESULT([nope, works out of the box]) ],
     [ AC_LINK_IFELSE(
-          AC_LANG_PROGRAM(
+          [AC_LANG_PROGRAM(
                 [[#include <stdlib.h>
                   #include <malloc/malloc.h>]],
-                [[malloc(1)]]
-    	                 ),[
-           AC_DEFINE([MUST_HAVE_MALLOC_MALLOC_H])
+                [[malloc(1)]])],
+	  [AC_DEFINE([MUST_HAVE_MALLOC_MALLOC_H])
            AC_MSG_RESULT([yes we do])],
           [AC_MSG_ERROR([Can not figure how to compile malloc])]
       )
-    ]  
+    ]
 )
 AC_LANG_POP(C)
 
 dnl is time_t 32 of 64 bit ?
 AC_CHECK_SIZEOF([time_t])
 
+AC_CHECK_SIZEOF([long int])
+
 CONFIGURE_PART(Find 3rd-Party Libraries)
 
 have_libdbi=no
 
 AC_ARG_ENABLE(libdbi,AS_HELP_STRING([--disable-libdbi],[do not build in support for libdbi]),[],[
-    AC_CHECK_HEADER(dbi/dbi.h, [ 
+    AC_CHECK_HEADER(dbi/dbi.h, [
        AC_CHECK_LIB(dbi, dbi_initialize, [
            AC_DEFINE(HAVE_LIBDBI,[1],[have got libdbi installed])
            LIBS="${LIBS} -ldbi -ldl"
@@ -499,14 +524,26 @@ AC_ARG_ENABLE(libdbi,AS_HELP_STRING([--disable-libdbi],[do not build in support 
 
 AM_CONDITIONAL(BUILD_LIBDBI,[test $have_libdbi != no])
 
+have_librados=no
+
+AC_ARG_ENABLE(librados,AS_HELP_STRING([--disable-librados],[do not build in support for librados]),[],[
+    AC_CHECK_HEADER(rados/librados.h, [
+        AC_DEFINE(HAVE_LIBRADOS,[1],[have got librados installed])
+        LIBS="${LIBS} -lrados"
+        have_librados=yes
+    ])
+])
+
+AM_CONDITIONAL(BUILD_LIBRADOS,[test $have_librados != no])
+
 have_libwrap=no
 
-AC_ARG_ENABLE(libwrap, AS_HELP_STRING([--disable-libwrap], [do not build in support for libwrap (tcp wrapper)]),[],[ 
-    AC_CHECK_HEADER(tcpd.h,[       
+AC_ARG_ENABLE(libwrap, AS_HELP_STRING([--disable-libwrap], [do not build in support for libwrap (tcp wrapper)]),[],[
+    AC_CHECK_HEADER(tcpd.h,[
         AC_CHECK_FUNCS(hosts_access, [
             AC_DEFINE(HAVE_LIBWRAP,[1],[have got libwrap installed])
-            have_libwrap=yes 
-        ],  
+            have_libwrap=yes
+        ],
         [
             AC_CHECK_LIB(wrap, hosts_access, [
                AC_DEFINE(HAVE_LIBWRAP,[1],[have got libwrap installed])
@@ -522,23 +559,44 @@ AM_CONDITIONAL(BUILD_LIBWRAP,[test $have_libwrap != no])
 
 AM_CONDITIONAL(BUILD_RRDGRAPH,[test $enable_rrd_graph != no])
 
+AM_CONDITIONAL(BUILD_RRDRESTORE,[test $enable_rrd_restore != no])
+
+EX_CHECK_ALL(glib-2.0,   glib_check_version,            glib.h,                 glib-2.0,    2.28.7, ftp://ftp.gtk.org/pub/glib/2.28/, "")
+
+AC_CHECK_FUNC(g_regex_new,[
+   AC_DEFINE(HAVE_G_REGEX_NEW,[1],[our glib has g_regex_new])
+],[
+   AC_MSG_CHECKING(if pcre is available to supply the missing regex support in glib)
+   AC_MSG_RESULT(checking now ...)
+   EX_CHECK_ALL(pcre,   pcre_compile,            pcre.h,                 pcre,    x.x.x, [get a newer glib and you will not need pcre at all],"")
+   AC_CHECK_FUNC(pcre_compile,[
+        AC_DEFINE(HAVE_PCRE_COMPILE,[1],[we have pcre to replace missing regexp support form glib])
+   ],[
+        AC_MSG_ERROR([you need either glib with g_regex support or libpcre to compile rrdtool.])
+   ])
+])
+
+
 
 CORE_LIBS="$LIBS"
 
 if test $enable_rrd_graph != no; then
 dnl EX_CHECK_ALL(z,          zlibVersion,               zlib.h,                 zlib,        1.2.5,  http://zlib.net/, "")
-dnl EX_CHECK_ALL(png,        png_access_version_number, png.h,                  libpng,      1.4.8,  ftp://ftp.simplesystems.org/pub/libpng/png/src/, "")
+EX_CHECK_ALL(png,        png_access_version_number, png.h,                  libpng,      1.4.8,  ftp://ftp.simplesystems.org/pub/libpng/png/src/, "")
 dnl EX_CHECK_ALL(freetype,   FT_Init_FreeType,          ft2build.h,		freetype2,   2.4.6,  http://download.savannah.gnu.org/releases/freetype/, /usr/include/freetype2)
 dnl EX_CHECK_ALL(fontconfig, FcInit,                    fontconfig.h,		fontconfig,  2.8.0,  http://www.freedesktop.org/software/fontconfig/release/, /usr/include)
-EX_CHECK_ALL(cairo,      cairo_font_options_create,     cairo.h,                cairo-png,   1.10.2,  http://cairographics.org/releases/, "")
-EX_CHECK_ALL(cairo,      cairo_svg_surface_create,      cairo-svg.h,            cairo-svg,   1.10.2,  http://cairographics.org/releases/, "")
-EX_CHECK_ALL(cairo,      cairo_pdf_surface_create,      cairo-pdf.h,            cairo-pdf,   1.10.2,  http://cairographics.org/releases/, "")
-EX_CHECK_ALL(cairo,      cairo_ps_surface_create,       cairo-ps.h,             cairo-ps,    1.10.2,  http://cairographics.org/releases/, "")
+dnl EX_CHECK_ALL(cairo,      cairo_font_options_create,     cairo.h,                cairo-png,   1.10.2,  http://cairographics.org/releases/, "")
+dnl EX_CHECK_ALL(cairo,      cairo_svg_surface_create,      cairo-svg.h,            cairo-svg,   1.10.2,  http://cairographics.org/releases/, "")
+dnl EX_CHECK_ALL(cairo,      cairo_pdf_surface_create,      cairo-pdf.h,            cairo-pdf,   1.10.2,  http://cairographics.org/releases/, "")
+dnl EX_CHECK_ALL(cairo,      cairo_ps_surface_create,       cairo-ps.h,             cairo-ps,    1.10.2,  http://cairographics.org/releases/, "")
 EX_CHECK_ALL(pangocairo-1.0,  pango_cairo_context_set_font_options,  pango/pango.h,  pangocairo,  1.28.4,    http://ftp.gnome.org/pub/GNOME/sources/pango/1.28, "")
 
+AC_CHECK_FUNCS(pango_font_map_create_context)
 fi
-EX_CHECK_ALL(glib-2.0,   glib_check_version,            glib.h,                 glib-2.0,    2.28.7, ftp://ftp.gtk.org/pub/glib/2.28/, "")
-EX_CHECK_ALL(xml2,       xmlParseFile,                  libxml/parser.h,        libxml-2.0,        2.7.8,  http://xmlsoft.org/downloads.html, /usr/include/libxml2)
+
+if test $enable_rrd_restore != no; then
+EX_CHECK_ALL(xml2,       xmlParseFile,                  libxml/parser.h,        libxml-2.0,        2.7.8,  http://xmlsoft.org/downloads.html, "")
+fi
 
 if test "$EX_CHECK_ALL_ERR" = "YES"; then
   AC_MSG_ERROR([Please fix the library issues listed above and try again.])
@@ -551,7 +609,10 @@ AC_SUBST(CORE_LIBS)
 AC_SUBST(ALL_LIBS)
 
 CONFIGURE_PART(Prep for Building Language Bindings)
-  
+
+dnl Allow "if enable_rpath" in Makefile.am
+AM_CONDITIONAL(ENABLE_RPATH,[test "x$enable_rpath" = "xyes"])
+
 dnl Check for Perl and friends
 PATH=$PATH:/usr/perl5/bin
 export PATH
@@ -572,7 +633,7 @@ AC_ARG_VAR(PERLLDFLAGS, [LD flags for Perl modules])
 if test "x$PERL" = "xno" -o  x$enable_perl = xno; then
 	COMP_PERL=
 else
-	COMP_PERL="perl_piped perl_shared"
+	COMP_PERL="perl-piped perl-shared"
         AC_MSG_CHECKING(for the perl version you are running)
 	PERL_VERSION=`$PERL -MConfig -e 'print $Config{version}'`
 	AC_MSG_RESULT($PERL_VERSION)
@@ -591,9 +652,9 @@ appropriately, or use a different perl setup that was compiled locally.
 
 I will disable the compilation of the RRDs perl module for now.
 ])
-  		    COMP_PERL="perl_piped"
+  		    COMP_PERL="perl-piped"
 	        fi
-            fi    
+            fi
         fi
 fi
 
@@ -618,17 +679,17 @@ if test ! -z "$PERLCC"; then
    if test ! -z "$PERLCCFLAGS"; then
        PERL_MAKE_OPTIONS="$PERL_MAKE_OPTIONS CCFLAGS=$PERLCCFLAGS"
    fi
-   
+
    if test -z "$PERLLD"; then
        PERLLD=$PERLCC
    fi
    PERL_MAKE_OPTIONS="$PERL_MAKE_OPTIONS LD=$PERLLD"
-  
+
    if test ! -z "$PERLLDFLAGS"; then
        PERL_MAKE_OPTIONS="$PERL_MAKE_OPTIONS LDFLAGS=$PERLLDFLAGS"
    fi
 fi
-        
+
 AC_ARG_WITH(perl-options,
 [  --with-perl-options=[OPTIONS]  options to pass on command-line when
                           generating Makefile from Makefile.PL. If you set this
@@ -658,8 +719,8 @@ else
 	 	AC_MSG_RESULT(YES)
 	else
 		COMP_RUBY=
-	 	AC_MSG_RESULT(Ruby found but mkmf is missing! Install the -dev package)		
-	fi				
+	 	AC_MSG_RESULT(Ruby found but mkmf is missing! Install the -dev package)
+	fi
 fi
 
 dnl pass additional ruby options when generating Makefile from Makefile.PL
@@ -667,7 +728,7 @@ AC_ARG_ENABLE(ruby-site-install,
 AS_HELP_STRING([--enable-ruby-site-install],[by default the rrdtool ruby modules are installed together with rrdtool in $prefix/lib/ruby. You have to add $prefix/lib/ruby/$ruby_version/$sitearch to your $: variable for ruby to find the RRD.so file.]),
 [RUBY_MAKE_OPTIONS=],[RUBY_MAKE_OPTIONS="sitedir=$langpref/lib/ruby"])
 
-    
+
 AC_ARG_WITH(ruby-options,
 [  --with-ruby-options=[OPTIONS]  options to pass on command-line when
                           generating Makefile from extconf.rb. If you set this
@@ -734,8 +795,8 @@ LUA_EOF
       LIBS=
       lua_havelib=no
       LUA_HAVE_COMPAT51=DONT_HAVE_COMPAT51
-      AC_SEARCH_LIBS(lua_call, lua$lua_vdot lua$lua_vndot lua,
-        [AC_SEARCH_LIBS(luaL_register, lua$lua_vdot lua$lua_vndot lua,
+      RRD_SEARCH_LIBS(lua_call, [#include <${lua_headerdir:+$lua_headerdir/}lua.h>], [0, 0, 0], lua$lua_vdot lua$lua_vndot lua,
+        [AC_SEARCH_LIBS(luaL_openlibs, lua$lua_vdot lua$lua_vndot lua,
           [lua_havelib=LUA$lua_vndot],
           [AC_SEARCH_LIBS(luaL_module, lualib$lua_vndot lualib$lua_vdot lualib,
             [lua_havelib=$lua_vndot; $LUA -l compat-5.1 2>/dev/null;
@@ -761,7 +822,7 @@ LUA_EOF
           for f in $lua_pkg_prefix$lua_vdot $lua_pkg_prefix$lua_vndot $lua_pkg_prefix; do
             lua_exec_prefix=`$PKGCONFIG --variable=prefix $f 2>/dev/null`
             # same binaries?
-            if test "$lua_exec_prefix/bin/lua" = "$LUA"; then 
+            if test "$lua_exec_prefix/bin/lua" = "$LUA"; then
                 # OK, found CFLAGS. Get Lua LFLAGS and modules install dir
                 LUA_CFLAGS=`$PKGCONFIG --cflags $f 2>/dev/null`
                 LUA_LFLAGS=`$PKGCONFIG --libs $f 2>/dev/null`
@@ -772,11 +833,11 @@ LUA_EOF
           done
         fi
 
-        LUA_RRD_LIBDIR="$langpref/lib/lua/$lua_vdot"
+        LUA_RRD_LIBDIR="$libdir/lua/$lua_vdot"
         # if lua 5.0 can't find compat-5.1, force installation of
         # compat-5.1.lua together with RRDtool.
         if test "$lua_vdot" = "5.0" -a "$LUA_HAVE_COMPAT51" != "HAVE_COMPAT51"; then
-          lua_need_compat51=1 
+          lua_need_compat51=1
           LUA_INSTALL_LMOD="$LUA_RRD_LIBDIR"
         fi
 
@@ -888,6 +949,8 @@ fi
 
 AC_SUBST(COMP_PYTHON)
 
+if test $enable_docs != no; then
+
 dnl Check for nroff
 AC_ARG_VAR(NROFF, [path to the local nroff version])
 AC_PATH_PROGS(NROFF, [gnroff nroff])
@@ -904,9 +967,22 @@ AC_ARG_VAR(RRDDOCDIR, [[DATADIR/doc/PACKAGE-VERSION] Documentation directory])
 if test -z "$RRDDOCDIR"; then
    RRDDOCDIR='${datadir}/doc/${PACKAGE}-${VERSION}'; fi
 
+fi
+
+# systemd check
+PKG_PROG_PKG_CONFIG
+AC_ARG_WITH([systemdsystemunitdir],
+	AS_HELP_STRING([--with-systemdsystemunitdir=DIR], [Directory for systemd service files]),
+	[], [with_systemdsystemunitdir=$($PKG_CONFIG --variable=systemdsystemunitdir systemd)])
+if test "x$with_systemdsystemunitdir" != xno; then
+	AC_SUBST([systemdsystemunitdir], [$with_systemdsystemunitdir])
+	AC_OUTPUT([etc/rrdcached.socket etc/rrdcached.service])
+fi
+AM_CONDITIONAL(HAVE_SYSTEMD, [test -n "$with_systemdsystemunitdir" -a "x$with_systemdsystemunitdir" != xno ])
+
 
 CONFIGURE_PART(Apply Configuration Information)
- 
+
 AC_CONFIG_FILES([examples/shared-demo.pl])
 AC_CONFIG_FILES([examples/piped-demo.pl])
 AC_CONFIG_FILES([examples/stripes.pl])
@@ -916,21 +992,19 @@ AC_CONFIG_FILES([examples/4charts.pl])
 AC_CONFIG_FILES([examples/perftest.pl])
 AC_CONFIG_FILES([examples/Makefile])
 AC_CONFIG_FILES([examples/rrdcached/Makefile])
+AC_CONFIG_FILES([etc/rrdcached-default-lsb])
+AC_CONFIG_FILES([tests/Makefile])
 AC_CONFIG_FILES([doc/Makefile])
-AC_CONFIG_FILES([po/Makefile.in]) 
+AC_CONFIG_FILES([po/Makefile.in])
 AC_CONFIG_FILES([src/Makefile])
-AC_CONFIG_FILES([src/librrd.sym.in])
 AC_CONFIG_FILES([src/librrd.pc])
 AC_CONFIG_FILES([bindings/Makefile])
 AC_CONFIG_FILES([bindings/tcl/Makefile])
 AC_CONFIG_FILES([bindings/tcl/ifOctets.tcl])
-AC_CONFIG_FILES([Makefile])          
 AC_CONFIG_FILES([bindings/lua/Makefile])
+AC_CONFIG_FILES([Makefile])
 
 AC_CONFIG_COMMANDS([default],[[ chmod +x examples/*.pl]],[[]])
-
-dnl intl requires our config to be called config.h. indulge it.
-AC_CONFIG_COMMANDS_POST([ test -f config.h || ln -s rrd_config.h config.h ])
 
 AC_OUTPUT
 
@@ -953,8 +1027,9 @@ echo "----------------------------------------------------------------"
 echo "Config is DONE!"
 echo
 echo "          With MMAP IO: $enable_mmap"
-echo "      Build rrd_getopt: $build_getopt"
+echo "          With Locking: $enable_flock"
 echo "       Build rrd_graph: $enable_rrd_graph"
+echo "     Build rrd_restore: $enable_rrd_restore"
 echo "       Static programs: $staticprogs"
 echo "          Perl Modules: $COMP_PERL"
 echo "           Perl Binary: $PERL"
@@ -974,20 +1049,24 @@ fi
 fi
 echo "    Build Tcl Bindings: $enable_tcl"
 echo " Build Python Bindings: $enable_python"
+echo "        Build examples: $enable_examples"
+echo "       Build rrdcached: $enable_rrdcached"
 echo "          Build rrdcgi: $enable_rrdcgi"
 echo "       Build librrd MT: $enable_pthread"
 echo "           Use gettext: $USE_NLS"
 echo "           With libDBI: $have_libdbi"
+echo "         With librados: $have_librados"
 echo "          With libwrap: $have_libwrap"
+echo "      With systemd dir: $with_systemdsystemunitdir"
 echo
 echo "             Libraries: $ALL_LIBS"
 echo
 echo "Type 'make' to compile the software and use 'make install' to "
 echo "install everything to: $prefix."
-echo 
+echo
 echo "       ... that wishlist is NO JOKE. If you find RRDtool useful"
 echo "make me happy. Go to http://tobi.oetiker.ch/wish and"
 echo "place an order."
-echo 
+echo
 echo "                               -- Tobi Oetiker <tobi@oetiker.ch>"
 echo "----------------------------------------------------------------"

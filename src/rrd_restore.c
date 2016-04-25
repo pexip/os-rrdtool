@@ -1,16 +1,20 @@
 /*****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013                    
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  *****************************************************************************
  * rrd_restore.c  Contains logic to parse XML input and create an RRD file
  * This file:
  * Copyright (C) 2008  Florian octo Forster  (original libxml2 code)
- * Copyright (C) 2008,2009 Tobias Oetiker
+ * Copyright (C) 2008,2009 Tobias Oetiker (rewrite using the pull parser)
  *****************************************************************************
  * $Id$
  *************************************************************************** */
 
 #include "rrd_tool.h"
 #include "rrd_rpncalc.h"
+#include "rrd_restore.h"
+#include "unused.h"
+#include "rrd_strtod.h"
+#include "rrd_create.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +37,10 @@
 # define close _close
 #endif
 
+#ifdef HAVE_LIBRADOS
+#include "rrd_rados.h"
+#endif
+
 
 #define ARRAY_LENGTH(a) (sizeof (a) / sizeof ((a)[0]))
 
@@ -49,7 +57,8 @@ static xmlChar* get_xml_element (
     xmlTextReaderPtr reader
     )
 {
-    while(xmlTextReaderRead(reader)){
+    int rc;
+    while((rc = xmlTextReaderRead(reader)) == 1){
         int type;
         xmlChar *name;
         type = xmlTextReaderNodeType(reader);
@@ -78,7 +87,36 @@ static xmlChar* get_xml_element (
         /* all seems well, return the happy news */
         return name;
     }
-    rrd_set_error("the xml ended while we were looking for an element");
+    if (rc == 0) {
+	rrd_set_error("the xml ended while we were looking for an element");
+    } else {
+	xmlErrorPtr err = xmlGetLastError();
+	/* argh: err->message often contains \n at the end. This is not 
+	   what we want: Bite the bullet by copying the message, replacing any 
+	   \n, constructing the rrd error message and freeing the temp. buffer.
+	*/
+	char *msgcpy = NULL, *c;
+	if (err != NULL && err->message != NULL) {
+	    msgcpy = strdup(err->message);
+	    if (msgcpy != NULL) {
+		for (c = msgcpy ; *c ; c++) {
+		    if (*c == '\n') *c = ' ';
+		}
+		/* strip whitespace from end of message */
+		for (c-- ; c != msgcpy ; c--) {
+		    if (!isprint(*c)) {
+			*c = 0;
+		    }
+		}
+	    } else {
+		/* out of memory during error handling, hmmmm */
+	    }
+	}
+
+	rrd_set_error("error reading/parsing XML: %s", 
+		      msgcpy != NULL ? msgcpy : "?");
+	if (msgcpy) free(msgcpy);
+    }
     return NULL;
 } /* get_xml_element */
 
@@ -167,7 +205,7 @@ static xmlChar* get_xml_text (
         }
 
         /* trying to read text from <a></a> we end up here
-           lets return an empty string insead. This is a tad optimistic
+           lets return an empty string instead. This is a tad optimistic
            since we do not check if it is actually </a> and not </b>
            we got, but first we do not know if we expect </a> and second
            we the whole implementation is on the optimistic side. */
@@ -205,11 +243,15 @@ static xmlChar* get_xml_text (
 static int get_xml_string(
     xmlTextReaderPtr reader,
     char *value,
-    int max_len)
+    unsigned int max_len)
 {
     xmlChar *str;
     str = get_xml_text(reader);
     if (str != NULL){
+        if (strlen((char *)str) >= max_len){
+            rrd_set_error("'%s' is longer than %i",str,max_len);
+            return -1;
+        }            
         strncpy(value,(char *)str,max_len);
         xmlFree(str);
         return 0;        
@@ -296,13 +338,11 @@ static int get_xml_double(
             xmlFree(text);
             return 0;            
         }        
-        errno = 0;
-        temp = strtod((char *)text,NULL);
-        if (errno>0){
+        if ( rrd_strtodbl((char *)text,NULL, &temp, NULL) != 2 ){
             rrd_set_error("ling %d: get_xml_double from '%s' %s",
                           xmlTextReaderGetParserLineNumber(reader),
                           text,rrd_strerror(errno));
-            xmlFree(text);        
+            xmlFree(text);
             return -1;
         }
         xmlFree(text);        
@@ -368,17 +408,24 @@ static int parse_tag_rra_database(
     rrd_t *rrd )
 {
     rra_def_t *cur_rra_def;
+    rra_ptr_t *cur_rra_ptr;
     unsigned int total_row_cnt;
     int       status;
     int       i;
     xmlChar *element;
-
+    unsigned int start_row_cnt;
+    int       ds_cnt;
+    
+    ds_cnt = rrd->stat_head->ds_cnt;
+    
     total_row_cnt = 0;
     for (i = 0; i < (((int) rrd->stat_head->rra_cnt) - 1); i++)
         total_row_cnt += rrd->rra_def[i].row_cnt;
 
     cur_rra_def = rrd->rra_def + i;
-
+    cur_rra_ptr = rrd->rra_ptr + i;
+    start_row_cnt = total_row_cnt;
+    
     status = 0;
     while ((element = get_xml_element(reader)) != NULL){        
         if (xmlStrcasecmp(element,(const xmlChar *)"row") == 0){
@@ -424,6 +471,63 @@ static int parse_tag_rra_database(
         if (status != 0)
             break;        
     }
+    
+    /* Set the RRA pointer to a random location */
+    cur_rra_ptr->cur_row = rrd_random() % cur_rra_def->row_cnt;
+    
+    /*
+     * rotate rows to match cur_row...
+     * 
+     * this will require some extra temp. memory. We can do this rather 
+     * brainlessly, because we have done all kinds of realloc before, 
+     * so we messed around with memory a lot already.
+     */
+    
+    /*
+        
+     What we want:
+     
+     +-start_row_cnt
+     |           +-cur_rra_def->row_cnt
+     |           |
+     |a---------n012-------------------------|
+    
+   (cur_rra_def->row_cnt slots of ds_cnt width)
+   
+     What we have 
+      
+     |   
+     |012-------------------------a---------n|
+     
+     Do this by:
+     copy away 0..(a-1) to a temp buffer
+     move a..n to start of buffer
+     copy temp buffer to position after where we moved n to
+     */
+    
+    int a = cur_rra_def->row_cnt - cur_rra_ptr->cur_row - 1;
+    
+    rrd_value_t *temp = malloc(ds_cnt * sizeof(rrd_value_t) * a);
+    if (temp == NULL) {
+        rrd_set_error("parse_tag_rra: malloc failed.");
+        return -1;
+    }
+
+    rrd_value_t *start = rrd->rrd_value + start_row_cnt * ds_cnt;
+    /* */            
+    memcpy(temp, start,
+            a * ds_cnt * sizeof(rrd_value_t));
+    
+    memmove(start,
+            start + a * ds_cnt,
+            (cur_rra_ptr->cur_row + 1) * ds_cnt * sizeof(rrd_value_t));
+            
+    memcpy(start + (cur_rra_ptr->cur_row + 1) * ds_cnt,
+           temp,
+           a * ds_cnt * sizeof(rrd_value_t));
+            
+    free(temp);
+
     return (status);
 }                       /* int parse_tag_rra_database */
 
@@ -441,7 +545,7 @@ static int parse_tag_rra_cdp_prep_ds_history(
     int       i;
     if ((history = get_xml_text(reader)) != NULL){
         history_ptr = (char *) (&cdp_prep->scratch[0]);
-        for (i = 0; history[i] != '\0'; i++)
+        for (i = 0; history[i] != '\0' && i < MAX_CDP_PAR_EN; i++)
             history_ptr[i] = (history[i] == '1') ? 1 : 0;
         xmlFree(history);        
         return 0;        
@@ -839,9 +943,6 @@ static int parse_tag_rra(
             return status;
         }        
     }    
-    /* Set the RRA pointer to a random location */
-    cur_rra_ptr->cur_row = rrd_random() % cur_rra_def->row_cnt;
-
     return (status);
 }                       /* int parse_tag_rra */
 
@@ -858,7 +959,8 @@ static int parse_tag_ds_cdef(
     if (cdef != NULL){
         /* We're always working on the last DS that has been added to the structure
          * when we get here */
-        parseCDEF_DS((char *)cdef, rrd, rrd->stat_head->ds_cnt - 1);
+        parseCDEF_DS((char *)cdef, rrd->ds_def + rrd->stat_head->ds_cnt - 1,
+		     rrd, lookup_DS);
         xmlFree(cdef);
         if (rrd_test_error())
             return -1;
@@ -1059,6 +1161,76 @@ static int parse_tag_rrd(
     return (status);
 }                       /* int parse_tag_rrd */
 
+/* helper type for stdioXmlInputReaderForPipeInterface */
+
+typedef struct stdioXmlReaderContext_t {
+    FILE *stream;
+    int freeOnClose;
+    int closed;
+    char eofchar;
+} stdioXmlReaderContext;
+
+/* 
+ * this is a xmlInputReadCallback that is used for the pipe interface
+ * in case the passed filename is "-" (meaning standard input) to take
+ * care it will never actually close the stdio stream stdin. It will
+ * report eof once it reads the eof character (currently set to ctrl-Z
+ * (character code 26, hex 0x1A) in the calling code) anywhere on a line.
+ *
+ * Note that ctrl-Z is not an allowed character in XML 1.0 (which rrdtool
+ * uses). 
+ *
+ */
+static int stdioXmlInputReadCallback(
+    void *context, 
+    char *buffer, 
+    int len)
+{
+    stdioXmlReaderContext *sctx = (stdioXmlReaderContext*) context;
+
+    if (sctx == NULL) return -1;
+    if (sctx->stream == NULL) return -1;
+    if (sctx->closed) return 0;
+
+    char *r = fgets(buffer, len, sctx->stream);
+    if (r == NULL) {
+	sctx->closed = 1;
+	return 0;
+    }
+
+    char *where = strchr(r, sctx->eofchar);
+    if (where != NULL) {
+	sctx->closed = 1;
+	*where = 0;
+    }
+
+    return strlen(r);
+}
+
+static int stdioXmlInputCloseCallback(void *context)
+{
+    stdioXmlReaderContext *sctx = (stdioXmlReaderContext*) context;
+
+    if (sctx == NULL) return 0;
+
+    if (sctx->freeOnClose) {
+	sctx->freeOnClose = 0;
+	free(sctx);
+    }
+    return 0; /* everything is OK */
+}
+
+/* an XML error reporting function that just suppresses all error messages.
+   This is used when parsing an XML file from stdin. This should help to 
+   not break the pipe interface protocol by suppressing the sending out of
+   XML error messages. */
+static void ignoringErrorFunc(
+    void UNUSED(*ctx), 
+    const char UNUSED(*msg), 
+    ...)
+{
+}
+
 static rrd_t *parse_file(
     const char *filename)
 {
@@ -1066,12 +1238,42 @@ static rrd_t *parse_file(
     int       status;
 
     rrd_t    *rrd;
+    stdioXmlReaderContext *sctx = NULL;
 
-    reader = xmlNewTextReaderFilename(filename);
+    /* special handling for XML on stdin (like it is the case when using
+       the pipe interface) */
+    if (strcmp(filename, "-") == 0) {
+		sctx = (stdioXmlReaderContext *) malloc(sizeof(*sctx));
+	if (sctx == NULL) {
+	    rrd_set_error("parse_file: malloc failed.");
+	    return (NULL);
+	}
+	sctx->stream = stdin;
+	sctx->freeOnClose = 1;
+	sctx->closed = 0;
+	sctx->eofchar = 0x1A; /* ctrl-Z */
+
+	xmlSetGenericErrorFunc(NULL, ignoringErrorFunc);
+
+        reader = xmlReaderForIO(stdioXmlInputReadCallback,
+                                stdioXmlInputCloseCallback,
+                                sctx, 
+                                filename,
+                                NULL,
+                                0);
+    } else {
+        reader = xmlNewTextReaderFilename(filename);
+    } 
     if (reader == NULL) {
+	if (sctx != NULL) free(sctx);
+
         rrd_set_error("Could not create xml reader for: %s",filename);
         return (NULL);
     }
+
+    /* NOTE: from now on, sctx will get freed implicitly through
+     * xmlFreeTextReader and its call to
+     * stdioXmlInputCloseCallback. */
 
     if (expect_element(reader,"rrd") != 0) {
         xmlFreeTextReader(reader);
@@ -1120,13 +1322,17 @@ static rrd_t *parse_file(
     return (rrd);
 }                       /* rrd_t *parse_file */
 
-static int write_file(
+int write_file(
     const char *file_name,
     rrd_t *rrd)
 {
     FILE     *fh;
-    unsigned int i;
-    unsigned int rra_offset;
+
+#ifdef HAVE_LIBRADOS
+    if (strncmp("ceph//", file_name, 6) == 0) {
+      return rrd_rados_create(file_name + 6, rrd);
+    }
+#endif
 
     if (strcmp("-", file_name) == 0)
         fh = stdout;
@@ -1155,71 +1361,39 @@ static int write_file(
             return (-1);
         }
     }
-    if (atoi(rrd->stat_head->version) < 3) {
-        /* we output 3 or higher */
-        strcpy(rrd->stat_head->version, "0003");
-    }
-    fwrite(rrd->stat_head, sizeof(stat_head_t), 1, fh);
-    fwrite(rrd->ds_def, sizeof(ds_def_t), rrd->stat_head->ds_cnt, fh);
-    fwrite(rrd->rra_def, sizeof(rra_def_t), rrd->stat_head->rra_cnt, fh);
-    fwrite(rrd->live_head, sizeof(live_head_t), 1, fh);
-    fwrite(rrd->pdp_prep, sizeof(pdp_prep_t), rrd->stat_head->ds_cnt, fh);
-    fwrite(rrd->cdp_prep, sizeof(cdp_prep_t),
-           rrd->stat_head->rra_cnt * rrd->stat_head->ds_cnt, fh);
-    fwrite(rrd->rra_ptr, sizeof(rra_ptr_t), rrd->stat_head->rra_cnt, fh);
 
-    /* calculate the number of rrd_values to dump */
-    rra_offset = 0;
-    for (i = 0; i < rrd->stat_head->rra_cnt; i++) {
-        unsigned long num_rows = rrd->rra_def[i].row_cnt;
-        unsigned long cur_row = rrd->rra_ptr[i].cur_row;
-        unsigned long ds_cnt = rrd->stat_head->ds_cnt;
-        if (num_rows > 0){
-            fwrite(rrd->rrd_value +
-                (rra_offset + num_rows - 1 - cur_row) * ds_cnt,
-                sizeof(rrd_value_t), (cur_row + 1) * ds_cnt, fh);
-
-            fwrite(rrd->rrd_value + rra_offset * ds_cnt,
-                sizeof(rrd_value_t), (num_rows - 1 - cur_row) * ds_cnt, fh);
-
-            rra_offset += num_rows;
-        }
-    }
+    int rc = write_fh(fh, rrd);
 
     /* lets see if we had an error */
     if (ferror(fh)) {
-        rrd_set_error("a file error occurred while creating '%s'", file_name);
+        rrd_set_error("a file error occurred while creating '%s': %s", file_name,
+            rrd_strerror(errno));
         fclose(fh);
+        if (strcmp("-", file_name) != 0)
+            unlink(file_name);
         return (-1);
     }
 
     fclose(fh);
-    return (0);
-}                       /* int write_file */
+    
+    return rc;
+}
 
 int rrd_restore(
     int argc,
     char **argv)
 {
+    struct optparse_long longopts[] = {
+        {"range-check", 'r', OPTPARSE_NONE},
+        {"force-overwrite", 'f', OPTPARSE_NONE},
+        {0},
+    };
+    struct    optparse options;
+    int       opt;
     rrd_t    *rrd;
-    char     *old_locale;
-    /* init rrd clean */
-    optind = 0;
-    opterr = 0;         /* initialize getopt */
-    while (42) {
-        int       opt;
-        int       option_index = 0;
-        static struct option long_options[] = {
-            {"range-check", no_argument, 0, 'r'},
-            {"force-overwrite", no_argument, 0, 'f'},
-            {0, 0, 0, 0}
-        };
 
-        opt = getopt_long(argc, argv, "rf", long_options, &option_index);
-
-        if (opt == EOF)
-            break;
-
+    optparse_init(&options, argc, argv);
+    while ((opt = optparse_long(&options, longopts, NULL)) != -1) {
         switch (opt) {
         case 'r':
             opt_range_check = 1;
@@ -1229,31 +1403,25 @@ int rrd_restore(
             opt_force_overwrite = 1;
             break;
 
-        default:
-            rrd_set_error("usage rrdtool %s [--range-check|-r] "
-                          "[--force-overwrite/-f]  file.xml file.rrd",
-                          argv[0]);
-            return (-1);
-            break;
+        case '?':
+            rrd_set_error("%s", options.errmsg);
+            return -1;
         }
-    }                   /* while (42) */
+    } /* while (opt != -1) */
 
-    if ((argc - optind) != 2) {
-        rrd_set_error("usage rrdtool %s [--range-check/-r] "
-                      "[--force-overwrite/-f] file.xml file.rrd", argv[0]);
-        return (-1);
+    if (options.argc - options.optind != 2) {
+        rrd_set_error("usage rrdtool %s [--range-check|-r] "
+                      "[--force-overwrite|-f] file.xml file.rrd",
+                      options.argv[0]);
+        return -1;
     }
 
-    old_locale = setlocale(LC_NUMERIC, "C");
-
-    rrd = parse_file(argv[optind]);
-
-    setlocale(LC_NUMERIC, old_locale);
+    rrd = parse_file(options.argv[options.optind]);
 
     if (rrd == NULL)
         return (-1);
     
-    if (write_file(argv[optind + 1], rrd) != 0) {
+    if (write_file(options.argv[options.optind + 1], rrd) != 0) {
         local_rrd_free(rrd);
         return (-1);
     }

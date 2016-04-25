@@ -453,7 +453,7 @@ static int Rrd_Fetch(
     return TCL_OK;
 }
 
-
+#ifdef HAVE_RRD_GRAPH
 
 static int Rrd_Graph(
     ClientData __attribute__((unused)) clientData,
@@ -463,7 +463,7 @@ static int Rrd_Graph(
 {
     Tcl_Channel channel;
     int       mode, fd2;
-    ClientData fd1;
+    int       fd1;
     FILE     *stream = NULL;
     char    **calcpr = NULL;
     int       rc, xsize, ysize;
@@ -494,7 +494,7 @@ static int Rrd_Graph(
                              strerror(Tcl_GetErrno()), (char *) NULL);
             return TCL_ERROR;
         }
-        if (Tcl_GetChannelHandle(channel, TCL_WRITABLE, &fd1) != TCL_OK) {
+        if (Tcl_GetChannelHandle(channel, TCL_WRITABLE, (ClientData)&fd1) != TCL_OK) {
             Tcl_AppendResult(interp,
                              "cannot get file descriptor associated with \"",
                              argv[1], "\"", (char *) NULL);
@@ -504,7 +504,7 @@ static int Rrd_Graph(
          * Must dup() file descriptor so we can fclose(stream), otherwise the fclose()
          * would close Tcl's file descriptor
          */
-        if ((fd2 = dup((int)fd1)) == -1) {
+        if ((fd2 = dup(fd1)) == -1) {
             Tcl_AppendResult(interp,
                              "dup() failed for file descriptor associated with \"",
                              argv[1], "\": ", strerror(errno), (char *) NULL);
@@ -563,7 +563,7 @@ static int Rrd_Graph(
     return TCL_OK;
 }
 
-
+#endif
 
 static int Rrd_Tune(
     ClientData __attribute__((unused)) clientData,
@@ -655,11 +655,13 @@ static CmdInfo rrdCmds[] = {
     {"Rrd::lastupdate", Rrd_Lastupdate, 0}, /* Thread-safe version */
     {"Rrd::update", Rrd_Update, 1}, /* Thread-safe version */
     {"Rrd::fetch", Rrd_Fetch, 0},
+#ifdef HAVE_RRD_GRAPH
     {"Rrd::graph", Rrd_Graph, 1},   /* Due to RRD's API, a safe
                                        interpreter cannot create
                                        a graph since it writes to
                                        a filename supplied by the
                                        caller */
+#endif
     {"Rrd::tune", Rrd_Tune, 1},
     {"Rrd::resize", Rrd_Resize, 1},
     {"Rrd::restore", Rrd_Restore, 1},
@@ -712,10 +714,10 @@ static int init(
              * used, then it's still possible for the owning interpreter
              * to fake out the missing commands:
              *
-             *   # Make all Rrd::* commands available in master interperter
+             *   # Make all Rrd::* commands available in master interpreter
              *   package require Rrd
              *   set safe [interp create -safe]
-             *   # Make safe Rrd::* commands available in safe interperter
+             *   # Make safe Rrd::* commands available in safe interpreter
              *   interp invokehidden $safe -global load ./tclrrd1.2.11.so
              *   # Provide the safe interpreter with the missing commands
              *   $safe alias Rrd::update do_update $safe

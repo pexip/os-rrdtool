@@ -28,12 +28,16 @@
 #  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #
 
-from distutils.core import setup, Extension
+try:
+    # Attempt to build using Distribute, which also supports bdist_wheel
+    from setuptools import setup
+    from setuptools.extension import Extension
+except ImportError:
+    from distutils.core import setup, Extension
 import sys, os
 
-RRDBASE = os.environ.get('LOCALBASE', '../../src')
-library_dir = os.environ.get('BUILDLIBDIR', os.path.join(RRDBASE, '.libs'))
-include_dir = os.environ.get('INCDIR', RRDBASE)
+TOP_SRCDIR = os.environ.get('ABS_TOP_SRCDIR', '../..')
+TOP_BUILDDIR = os.environ.get('ABS_TOP_BUILDDIR', '../..')
 
 setup(name = "py-rrdtool",
       version = "0.2.2",
@@ -45,11 +49,12 @@ setup(name = "py-rrdtool",
       #packages = ['rrdtool'],
       ext_modules = [
           Extension(
-            "rrdtoolmodule",
+            "rrdtool",
             ["rrdtoolmodule.c"],
             libraries=['rrd'],
-            library_dirs=[library_dir],
-            include_dirs=[include_dir],
+            library_dirs=[ os.path.join(TOP_BUILDDIR, 'src', '.libs') ],
+            include_dirs=[ os.path.join(TOP_BUILDDIR, 'src'),
+                           os.path.join(TOP_SRCDIR, 'src') ],
           )
       ]
 )
