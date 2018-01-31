@@ -39,6 +39,9 @@ endif
 #we build the bindings manually from debian/rules
 CONFFLAGS += --disable-python --disable-ruby
 
+#disable dbi support
+CONFFLAGS += --disable-libdbi
+
 #set the right paths
 CONFFLAGS += --prefix=/usr --docdir=/usr/share/doc/rrdtool
 
