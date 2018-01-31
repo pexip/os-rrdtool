@@ -1,3 +1,9 @@
+rrdtool (1.4.8-1.2pexip1) pexip; urgency=medium
+
+  * Prepare Pexip packaging
+
+ -- John-Mark Bell <jmb@pexip.com>  Wed, 31 Jan 2018 00:22:05 +0000
+
 rrdtool (1.4.8-1.2) unstable; urgency=medium
 
   * Non-maintainer upload.

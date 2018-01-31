@@ -1,8 +1,9 @@
 Source: rrdtool
 Section: utils
 Priority: optional
-Maintainer: Debian RRDtool Team <rrdtool@ml.snow-crash.org>
-Uploaders: Sebastian Harl <tokkee@debian.org>, Alexander Wirt <formorer@debian.org>, Bernd Zeimetz <bzed@debian.org>
+Maintainer: Pexip AS <packaging@pexip.com>
+XSBC-Pexip-Original-Maintainer: Debian RRDtool Team <rrdtool@ml.snow-crash.org>
+XSBC-Pexip-Original-Uploaders: Sebastian Harl <tokkee@debian.org>, Alexander Wirt <formorer@debian.org>, Bernd Zeimetz <bzed@debian.org>
 Standards-Version: 3.9.5
 Build-Depends: debhelper (>= 9), groff, autotools-dev, dh-autoreconf, gettext, quilt,
  zlib1g-dev, libpng12-dev, libcairo2-dev, libpango1.0-dev, libfreetype6-dev,
@@ -19,6 +20,7 @@ Vcs-Browser: http://git.snow-crash.org/?p=pkg-rrdtool.git;a=summary
 Vcs-Git: git://git.snow-crash.org/pkg-rrdtool.git/
 X-Python-Version: >= 2.3
 XS-Ruby-Versions: all
+XS-Pexip-Upstream: http://ftp.debian.org/debian/ jessie
 
 Package: rrdtool
 Architecture: any
