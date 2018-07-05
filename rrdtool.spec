@@ -10,7 +10,7 @@
 
 Summary: Round Robin Database Tool to store and display time-series data
 Name: rrdtool
-Version: 1.4.8
+Version: 1.GIT
 Release: 1%{?dist}
 License: GPLv2+ with exceptions
 Group: Applications/Databases
@@ -278,9 +278,6 @@ extension=rrdtool.so
 __EOF__
 %endif
 
-# Dunno why this is getting installed here...
-%{__rm} -f $RPM_BUILD_ROOT%{perl_vendorarch}/../leaktest.pl
-
 # We only want .txt and .html files for the main documentation
 %{__mkdir_p} doc2/html doc2/txt
 %{__cp} -a doc/*.txt doc2/txt/
@@ -306,8 +303,8 @@ find examples/ -type f -exec chmod 0644 {} \;
 # Set up rrdcached
 %__install -d -m 0755 $RPM_BUILD_ROOT/%{_sysconfdir}/default
 %__install -d -m 0755 $RPM_BUILD_ROOT/%{_sysconfdir}/rc.d/init.d
-%__install -m 0644 etc/rrdcached-default $RPM_BUILD_ROOT/%{_sysconfdir}/default/rrdcached
-%__install -m 0755 etc/rrdcached-init $RPM_BUILD_ROOT/%{_sysconfdir}/rc.d/init.d/rrdcached
+%__install -m 0644 etc/rrdcached-default-redhat $RPM_BUILD_ROOT/%{_sysconfdir}/default/rrdcached
+%__install -m 0755 etc/rrdcached-init-redhat $RPM_BUILD_ROOT/%{_sysconfdir}/rc.d/init.d/rrdcached
 %__install -d -m 0755 -o nobody -g nobody $RPM_BUILD_ROOT/%{_localstatedir}/run/rrdcached
 
 %clean

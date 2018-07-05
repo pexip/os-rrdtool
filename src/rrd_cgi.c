@@ -1,5 +1,5 @@
 /*****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  *****************************************************************************
  * rrd_cgi.c  RRD Web Page Generator
  *****************************************************************************/
@@ -7,11 +7,6 @@
 #include "rrd_tool.h"
 #ifdef HAVE_STDLIB_H
 #include <stdlib.h>
-#endif
-
-#ifdef WIN32
-   #define strcasecmp stricmp
-   #define strcasencmp strnicmp
 #endif
 
 #define MEMBLK 1024
@@ -337,7 +332,7 @@ static const char *putvar(
     return varheap[i].value;
 }
 
-/* expand those RRD:* directives that can be used recursivly */
+/* expand those RRD:* directives that can be used recursively */
 static char *rrd_expand_vars(
     char *buffer)
 {
@@ -387,14 +382,10 @@ static void calfree(
 char     *stralloc(
     const char *str)
 {
-    char     *nstr;
-
     if (!str) {
         return NULL;
     }
-    nstr = malloc((strlen(str) + 1));
-    strcpy(nstr, str);
-    return (nstr);
+    return strdup(str);
 }
 
 static int readfile(
@@ -439,7 +430,7 @@ static int readfile(
                   (totalcnt - writecnt) * sizeof(char), input);
         if (writecnt >= totalcnt) {
             totalcnt += MEMBLK;
-            if (((*buffer) =
+            if (((*buffer) = (char *)
                  rrd_realloc((*buffer),
                              (totalcnt + 4) * sizeof(char))) == NULL) {
                 perror("Realloc Buffer:");
@@ -461,10 +452,12 @@ int main(
     char     *buffer;
     long      i;
     long      filter = 0;
-    struct option long_options[] = {
-        {"filter", no_argument, 0, 'f'},
-        {0, 0, 0, 0}
+    struct optparse_long longopts[] = {
+        {"filter", 'f', OPTPARSE_NONE},
+        {0},
     };
+    struct optparse options;
+    int opt;
 
 #ifdef MUST_DISABLE_SIGFPE
     signal(SIGFPE, SIG_IGN);
@@ -472,27 +465,18 @@ int main(
 #ifdef MUST_DISABLE_FPMASK
     fpsetmask(0);
 #endif
-    optind = 0;
-    opterr = 0;         /* initialize getopt */
 
     /* what do we get for cmdline arguments?
        for (i=0;i<argc;i++)
        printf("%d-'%s'\n",i,argv[i]); */
-    while (1) {
-        int       option_index = 0;
-        int       opt;
-
-        opt = getopt_long(argc, argv, "f", long_options, &option_index);
-        if (opt == EOF) {
-            break;
-        }
-
+    optparse_init(&options, argc, argv);
+    while ((opt = optparse_long(&options,longopts,NULL)) != -1) {
         switch (opt) {
         case 'f':
             filter = 1;
             break;
         case '?':
-            printf("unknown commandline option '%s'\n", argv[optind - 1]);
+            printf("%s\n", options.errmsg);
             return -1;
         }
     }
@@ -505,15 +489,15 @@ int main(
     /* make sure we have one extra argument, 
        if there are others, we do not care Apache gives several */
 
-    /* if ( (optind != argc-2 
+    /* if ( (options.optind != options.argc-2 
        && strstr( getenv("SERVER_SOFTWARE"),"Apache/2") != NULL) 
-       && optind != argc-1) { */
+       && options.optind != options.argc-1) { */
 
-    if (optind >= argc) {
+    if (options.optind >= options.argc) {
         fprintf(stderr, "ERROR: expected a filename\n");
         exit(1);
     } else {
-        readfile(argv[optind], &buffer, 1);
+        readfile(options.argv[options.optind], &buffer, 1);
     }
 
     if (rrd_test_error()) {
@@ -530,7 +514,7 @@ int main(
 #endif
 
 
-    /* expand rrd directives in buffer recursivly */
+    /* expand rrd directives in buffer recursivley */
     for (i = 0; buffer[i]; i++) {
         if (buffer[i] != '<')
             continue;
@@ -592,12 +576,13 @@ char     *rrdsetenv(
     const char **args)
 {
     if (argc >= 2) {
-        char     *xyz = malloc((strlen(args[0]) + strlen(args[1]) + 2));
+        const size_t len = strlen(args[0]) + strlen(args[1]) + 2;
+        char *xyz = (char *) malloc(len);
 
         if (xyz == NULL) {
             return stralloc("[ERROR: allocating setenv buffer]");
         };
-        sprintf(xyz, "%s=%s", args[0], args[1]);
+        snprintf(xyz, len, "%s=%s", args[0], args[1]);
         if (putenv(xyz) == -1) {
             free(xyz);
             return stralloc("[ERROR: failed to do putenv]");
@@ -785,16 +770,17 @@ char     *includefile(
 
         readfile(filename, &buffer, 0);
         if (rrd_test_error()) {
-            char     *err = malloc((strlen(rrd_get_error()) + DS_NAM_SIZE));
+            const size_t len = strlen(rrd_get_error()) + DS_NAM_SIZE;
+            char *err = (char *) malloc(len);
 
-            sprintf(err, "[ERROR: %s]", rrd_get_error());
+            snprintf(err, len, "[ERROR: %s]", rrd_get_error());
             rrd_clear_error();
             return err;
         } else {
             return buffer;
         }
     } else {
-        return stralloc("[ERROR: No Inclue file defined]");
+        return stralloc("[ERROR: No Include file defined]");
     }
 }
 
@@ -839,7 +825,7 @@ char     *cgigetq(
         for (c = buf; *c != '\0'; c++)
             if (*c == '"')
                 qc++;
-        if ((buf2 = malloc((strlen(buf) + 4 * qc + 4))) == NULL) {
+        if ((buf2 = (char *) malloc((strlen(buf) + 4 * qc + 4))) == NULL) {
             perror("Malloc Buffer");
             exit(1);
         };
@@ -885,7 +871,7 @@ char     *cgigetqp(
         return NULL;
     }
 
-    buf2 = malloc(strlen(buf) + 1);
+    buf2 = (char *) malloc(strlen(buf) + 1);
     if (!buf2) {
         perror("cgigetqp(): Malloc Path Buffer");
         exit(1);
@@ -951,10 +937,9 @@ char     *drawgraph(
         return stralloc(calcpr[0]);
     } else {
         if (rrd_test_error()) {
-            char     *err =
-                malloc((strlen(rrd_get_error()) +
-                        DS_NAM_SIZE) * sizeof(char));
-            sprintf(err, "[ERROR: %s]", rrd_get_error());
+            const size_t len = strlen(rrd_get_error()) + DS_NAM_SIZE;
+            char *err = (char *) malloc(len);
+            snprintf(err, len, "[ERROR: %s]", rrd_get_error());
             rrd_clear_error();
             return err;
         }
@@ -986,7 +971,7 @@ char     *printtimelast(
     char     *buf;
 
     if (argc == 2) {
-        buf = malloc(255);
+        buf = (char *) malloc(255);
         if (buf == NULL) {
             return stralloc("[ERROR: allocating strftime buffer]");
         };
@@ -995,10 +980,9 @@ char     *printtimelast(
 
         last = rrd_last(argc, (char **) args - 1);
         if (rrd_test_error()) {
-            char     *err =
-                malloc((strlen(rrd_get_error()) +
-                        DS_NAM_SIZE) * sizeof(char));
-            sprintf(err, "[ERROR: %s]", rrd_get_error());
+            const size_t len = strlen(rrd_get_error()) + DS_NAM_SIZE;
+            char *err = (char *) malloc(len);
+            snprintf(err, len, "[ERROR: %s]", rrd_get_error());
             rrd_clear_error();
             return err;
         }
@@ -1018,7 +1002,7 @@ char     *printtimenow(
     char     *buf;
 
     if (argc == 1) {
-        buf = malloc(255);
+        buf = (char *) malloc(255);
         if (buf == NULL) {
             return stralloc("[ERROR: allocating strftime buffer]");
         };
@@ -1032,7 +1016,7 @@ char     *printtimenow(
     return stralloc("[ERROR: not enough arguments for RRD::TIME::NOW]");
 }
 
-/* Scan buffer until an unescaped '>' arives.
+/* Scan buffer until an unescaped '>' arrives.
  * Update argument array with arguments found.
  * Return end cursor where parsing stopped, or NULL in case of failure.
  *
@@ -1162,7 +1146,7 @@ char     *scanargs(
         if (argc == argsz) {
             /* resize argument array */
             argsz *= 2;
-            argv = rrd_realloc(argv, argsz * sizeof(char *));
+            argv = (char **) rrd_realloc(argv, argsz * sizeof(char *));
             if (*argv == NULL) {
                 return NULL;
             }
@@ -1279,7 +1263,7 @@ int parse(
         /* make sure we do not shrink the mallocd block */
         size_t    newbufsize = i + strlen(end) + valln + 1;
 
-        *buf = rrd_realloc(*buf, newbufsize);
+        *buf = (char *) rrd_realloc(*buf, newbufsize);
 
         if (*buf == NULL) {
             perror("Realoc buf:");
@@ -1385,6 +1369,7 @@ s_var   **rrdcgiReadVariables(
     s_var   **result;
     int       i, k, len;
     char      tmp[101];
+    size_t    tmplen;
 
     cp = getenv("REQUEST_METHOD");
     ip = getenv("CONTENT_LENGTH");
@@ -1401,9 +1386,8 @@ s_var   **rrdcgiReadVariables(
     } else if (cp && !strcmp(cp, "GET")) {
         esp = getenv("QUERY_STRING");
         if (esp && strlen(esp)) {
-            if ((line = (char *) malloc(strlen(esp) + 2)) == NULL)
+            if ((line = strdup(esp)) == NULL)
                 return NULL;
-            sprintf(line, "%s", esp);
         } else
             return NULL;
     } else {
@@ -1411,22 +1395,18 @@ s_var   **rrdcgiReadVariables(
         printf("(offline mode: enter name=value pairs on standard input)\n");
         memset(tmp, 0, sizeof(tmp));
         while ((cp = fgets(tmp, 100, stdin)) != NULL) {
-            if (strlen(tmp)) {
-                if (tmp[strlen(tmp) - 1] == '\n')
-                    tmp[strlen(tmp) - 1] = '&';
-                if (length) {
-                    length += strlen(tmp);
-                    len = (length + 1) * sizeof(char);
+            if ((tmplen = strlen(tmp)) != 0) {
+                if (tmp[tmplen - 1] == '\n')
+                    tmp[tmplen - 1] = '&';
+                length += tmplen;
+                len = (length + 1) * sizeof(char);
+                if ((unsigned) length > tmplen) {
                     if ((line = (char *) realloc(line, len)) == NULL)
                         return NULL;
-                    strcat(line, tmp);
+                    strncat(line, tmp, tmplen);
                 } else {
-                    length = strlen(tmp);
-                    len = (length + 1) * sizeof(char);
-                    if ((line = (char *) malloc(len)) == NULL)
+                    if ((line = strdup(tmp)) == NULL)
                         return NULL;
-                    memset(line, 0, len);
-                    strcpy(line, tmp);
                 }
             }
             memset(tmp, 0, sizeof(tmp));
@@ -1522,16 +1502,12 @@ s_var   **rrdcgiReadVariables(
                                result[i]->name, result[i]->value);
                 }
                 i++;
-            } else {    /* There is already such a name, suppose a mutiple field */
+            } else {    /* There is already such a name, suppose a multiple field */
                 cp = ++esp;
-                len =
-                    (strlen(result[k]->value) + (ip - esp) +
-                     2) * sizeof(char);
-                if ((sptr = (char *) malloc(len)) == NULL)
+                len = strlen(result[k]->value) + (ip - esp) + 2;
+                if ((sptr = (char *) calloc(len, sizeof(char))) == NULL)
                     return NULL;
-                memset(sptr, 0, len);
-                sprintf(sptr, "%s\n", result[k]->value);
-                strncat(sptr, cp, ip - esp);
+                snprintf(sptr, len, "%s\n%s", result[k]->value, cp);
                 free(result[k]->value);
                 result[k]->value = rrdcgiDecodeString(sptr);
             }

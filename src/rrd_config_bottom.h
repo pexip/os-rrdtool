@@ -10,6 +10,7 @@
 #  undef _BSD_SOURCE
 # endif
 # define _XOPEN_SOURCE 600
+# define _DEFAULT_SOURCE 1
 # define _BSD_SOURCE 1
 # include <features.h>
 #endif
@@ -195,7 +196,7 @@ char *strchr (), *strrchr ();
 #  define isinf(a) (fp_class(a) == FP_NEG_INF || fp_class(a) == FP_POS_INF)
 #endif
 
-#if (! defined(HAVE_ISINF) && defined(HAVE_FPCLASSIFY) && defined(FP_PLUS_INF) && defined(FP_MINUS_INF))
+#if (! defined(HAVE_ISINF) && defined(HAVE_FPCLASSIFY) && defined(FP_MINUS_INF) && defined(FP_PLUS_INF))
 #  define HAVE_ISINF 1
 #  define isinf(a) (fpclassify(a) == FP_MINUS_INF || fpclassify(a) == FP_PLUS_INF)
 #endif

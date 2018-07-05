@@ -1,5 +1,8 @@
+#ifndef RRDLIB_H_4FD7D37D56A448C392AF46508C56D3CC
+#define RRDLIB_H_4FD7D37D56A448C392AF46508C56D3CC
+
 /*****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  *****************************************************************************
  * rrdlib.h   Public header file for librrd
  *****************************************************************************
@@ -49,9 +52,6 @@
 extern    "C" {
 #endif
 
-#ifndef _RRDLIB_H
-#define _RRDLIB_H
-
 #include <sys/types.h>  /* for off_t */
 
 #ifndef WIN32
@@ -75,6 +75,10 @@ extern    "C" {
 #ifndef DNAN
 # define DNAN rrd_set_to_DNAN()
 #endif
+	
+/* declare opaque data structure, so we can use its pointers for type safety */	
+	
+struct rrd_t;
 
 #ifndef DINF
 # define DINF rrd_set_to_DINF()
@@ -96,6 +100,10 @@ extern    "C" {
         size_t     file_len; /* total size of the rrd file */
         size_t     pos;  /* current pos in file */
         void      *pvt;
+	struct rrd_t *rrd;		/* the corresponding RRD structure, if any */
+#ifdef HAVE_LIBRADOS
+        struct rrd_rados_t *rados;
+#endif
     } rrd_file_t;
 
 /* information used for the conventional file access methods */
@@ -228,18 +236,51 @@ extern    "C" {
     const char *filename,
     unsigned long pdp_step,
     time_t last_up,
+    /* int no_overwrite, */
+    int argc,
+    const char **argv);
+    int       rrd_create_r2(
+    const char *filename,
+    unsigned long pdp_step,
+    time_t last_up,
+    int no_overwrite,
+    const char **sources,
+    const char *_template,
     int argc,
     const char **argv);
     rrd_info_t *rrd_info_r(
-    char *);
-/* NOTE: rrd_update_r are only thread-safe if no at-style time
-   specifications get used!!! */
+    const char *);
+/* NOTE: rrd_update_r and rrd_update_v_r are only thread-safe if no at-style
+   time specifications get used!!! */
 
     int       rrd_update_r(
     const char *filename,
     const char *_template,
     int argc,
     const char **argv);
+    int       rrd_update_v_r(
+    const char *filename,
+    const char *_template,
+    int argc,
+    const char **argv,
+    rrd_info_t * pcdp_summary);
+
+/* extra flags */
+#define RRD_SKIP_PAST_UPDATES 0x01
+
+    int       rrd_updatex_r(
+    const char *filename,
+    const char *_template,
+    int extra_flags,
+    int argc,
+    const char **argv);
+    int       rrd_updatex_v_r(
+    const char *filename,
+    const char *_template,
+    int extra_flags,
+    int argc,
+    const char **argv,
+    rrd_info_t * pcdp_summary);
     int rrd_fetch_r (
             const char *filename,
             const char *cf,
@@ -340,11 +381,19 @@ int       rrd_proc_start_end(
 
     long rrd_random(void);
 
+    int rrd_add_ptr_chunk(void ***dest, size_t *dest_size, void *src,
+                          size_t *alloc, size_t chunk);
     int rrd_add_ptr(void ***dest, size_t *dest_size, void *src);
     int rrd_add_strdup(char ***dest, size_t *dest_size, char *src);
+    int rrd_add_strdup_chunk(char ***dest, size_t *dest_size, char *src,
+                             size_t *alloc, size_t chunk);
     void rrd_free_ptrs(void ***src, size_t *cnt);
 
     int rrd_mkdir_p(const char *pathname, mode_t mode);
+
+    const char * rrd_scaled_duration (const char * token,
+                                      unsigned long divisor,
+                                      unsigned long * valuep);
 
 /*
  * The following functions are _internal_ functions needed to read the raw RRD
@@ -358,9 +407,9 @@ int       rrd_proc_start_end(
  * RRDTool mailing list and whine about your broken application, you will get
  * hit with something smelly!
  */
-#if defined(_RRD_TOOL_H) || defined(RRD_EXPORT_DEPRECATED)
+#if defined(RRD_TOOL_H_3853987DDF7E4709A5B5849E5A6204F4) || defined(RRD_EXPORT_DEPRECATED)
 
-# if defined(_RRD_TOOL_H)
+# if defined(RRD_TOOL_H_3853987DDF7E4709A5B5849E5A6204F4)
 #  include "rrd_format.h"
 # else
 #  include <rrd_format.h>
@@ -429,8 +478,8 @@ int       rrd_proc_start_end(
               RRD_DEPRECATED;
 #endif                  /* defined(_RRD_TOOL_H) || defined(RRD_EXPORT_DEPRECATED) */
 
-#endif                  /* _RRDLIB_H */
-
 #ifdef  __cplusplus
 }
 #endif
+
+#endif /* RRDLIB_H */

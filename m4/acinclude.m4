@@ -1,12 +1,12 @@
 dnl Helper Functions for the RRDtool configure.ac script
 dnl 
-dnl this file gets included into aclocal.m4 when runnning aclocal
+dnl this file gets included into aclocal.m4 when running aclocal
 dnl
 dnl
 dnl
 dnl Check for the presence of a particular library and its header files
 dnl if this check fails set the environment variable EX_CHECK_ALL_ERR to YES
-dnl and prints out a helful message
+dnl and prints out a helpful message
 dnl
 dnl
 dnl EX_CHECK_ALL(library, function, header, pkgconf name, tested-version, homepage, cppflags)
@@ -79,8 +79,8 @@ AC_DEFUN([EX_CHECK_ALL],
        LIBS="${ex_check_save_LIBS}"
        CPPFLAGS="${ex_check_save_CPPFLAGS}"
        LDFLAGS="${ex_check_save_LDFLAGS}"
-    fi
-    AC_LANG_POP(C)
+   fi
+   AC_LANG_POP(C)
 ]
 )
 
@@ -339,7 +339,7 @@ AC_DEFUN([AC_IEEE], [
 AC_MSG_CHECKING([if IEEE math works $1])
 AC_CACHE_VAL([rd_cv_ieee_$2],
 [AC_RUN_IFELSE([AC_LANG_SOURCE([[$3
-#include "src/rrd_config_bottom.h"
+#include "${srcdir}/src/rrd_config_bottom.h"
 #include <stdio.h>
 int main(void){
     double rrdnan,rrdinf,rrdc,rrdzero;
@@ -361,7 +361,7 @@ int main(void){
  }]])],[rd_cv_ieee_$2=yes],[rd_cv_ieee_$2=no],[$as_echo_n "(skipped ... cross-compiling) " >&6
   # Bypass further checks
   rd_cv_ieee_works=yes])])
-dnl these we run regardles is cached or not
+dnl these we run regardless is cached or not
 if test x${rd_cv_ieee_$2} = "xyes"; then
  AC_MSG_RESULT(yes)
  $5
@@ -400,7 +400,7 @@ AC_IEEE([out of the box], works, , , ,
                    [AC_DEFINE(MUST_DISABLE_SIGFPE)
                    PERLFLAGS="CCFLAGS=-DMUST_DISABLE_SIGFPE"],		
                    AC_MSG_ERROR([
-Your Compiler does not do propper IEEE math ... Please find out how to
+Your Compiler does not do proper IEEE math ... Please find out how to
 make IEEE math work with your compiler and let me know (tobi@oetiker.ch).
 Check config.log to see what went wrong ...
 ]))])])])])])])])])])
@@ -552,7 +552,7 @@ dnl Timur I. Bakeyev  timur@gnu.org,
 dnl http://mail.gnu.org/pipermail/autoconf/1999-October/008311.html
 dnl partly rewritten by Peter Stamfest <peter@stamfest.at>
 
-dnl This determines, if struct tm containes tm_gmtoff field
+dnl This determines, if struct tm contains tm_gmtoff field
 dnl or we should use extern long int timezone.
 
 dnl Add the following to your acconfig.h:
@@ -611,4 +611,32 @@ AC_DEFUN([GC_TIMEZONE], [
                         AC_DEFINE(HAVE_TIMEZONE,1,[is there an external timezone variable instead ?])
                 fi
         fi
+])
+
+dnl Like AC_SEARCH_LIBS, but allowing specifying a prologue and arguments so
+dnl that macros expand correctly.
+AC_DEFUN([RRD_SEARCH_LIBS],
+[AS_VAR_PUSHDEF([rrd_Search], [rrd_cv_search_$1])dnl
+AC_CACHE_CHECK([for library containing $1], [rrd_Search],
+[rrd_func_search_save_LIBS=$LIBS
+AC_LANG_CONFTEST([AC_LANG_PROGRAM([$2], [$1 ($3);])])
+for rrd_lib in '' $4; do
+  if test -z "$rrd_lib"; then
+    rrd_res="none required"
+  else
+    rrd_res=-l$rrd_lib
+    LIBS="-l$rrd_lib $7 $rrd_func_search_save_LIBS"
+  fi
+  AC_LINK_IFELSE([], [AS_VAR_SET([rrd_Search], [$rrd_res])])
+  AS_VAR_SET_IF([rrd_Search], [break])
+done
+AS_VAR_SET_IF([rrd_Search], , [AS_VAR_SET([rrd_Search], [no])])
+rm conftest.$ac_ext
+LIBS=$rrd_func_search_save_LIBS])
+AS_VAR_COPY([rrd_res], [rrd_Search])
+AS_IF([test "$rrd_res" != no],
+  [test "$rrd_res" = "none required" || LIBS="$rrd_res $LIBS"
+  $5],
+      [$6])
+AS_VAR_POPDEF([rrd_Search])dnl
 ])

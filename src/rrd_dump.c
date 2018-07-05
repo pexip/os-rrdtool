@@ -1,5 +1,5 @@
 /*****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  *****************************************************************************
  * rrd_dump  Display a RRD
  *****************************************************************************
@@ -44,8 +44,8 @@
 #include "rrd_tool.h"
 #include "rrd_rpncalc.h"
 #include "rrd_client.h"
+#include "rrd_snprintf.h"
 
-#include <locale.h>
 
 #if !(defined(NETWARE) || defined(WIN32))
 extern char *tzname[2];
@@ -77,15 +77,19 @@ int rrd_dump_cb_r(
     rrd_t     rrd;
     rrd_value_t value;
     struct tm tm;
-    char *old_locale = "";
 
-//These two macros are local defines to clean up visible code from its redndancy
+//These two macros are local defines to clean up visible code from its redundancy
 //and make it easier to read.
 #define CB_PUTS(str)                                            \
-    cb((str), strlen((str)), user)
+    do {							\
+        size_t len = strlen(str);				\
+								\
+        if (cb((str), len, user) != len)                        \
+            goto err_out;                                       \
+    } while (0);
 #define CB_FMTS(...) do {                                       \
     char buffer[256];                                           \
-    snprintf (buffer, sizeof(buffer), __VA_ARGS__);             \
+    rrd_snprintf (buffer, sizeof(buffer), __VA_ARGS__);         \
     CB_PUTS (buffer);                                           \
     } while (0)
 //These macros are to be undefined at the end of this function
@@ -102,10 +106,6 @@ int rrd_dump_cb_r(
         rrd_free(&rrd);
         return (-1);
     }
-
-    old_locale = setlocale(LC_NUMERIC, NULL);
-    setlocale(LC_NUMERIC, "C");
-
 
     if (opt_header == 1) {
         CB_PUTS("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
@@ -127,7 +127,7 @@ int rrd_dump_cb_r(
     if (atoi(rrd.stat_head->version) <= 3) {
         CB_FMTS("\t<version>%s</version>\n", RRD_VERSION3);
     } else {
-        CB_FMTS("\t<version>%s</version>\n", RRD_VERSION);
+        CB_FMTS("\t<version>%s</version>\n", rrd.stat_head->version);
     }
     
     CB_FMTS("\t<step>%lu</step> <!-- Seconds -->\n",
@@ -140,7 +140,7 @@ int rrd_dump_cb_r(
 # error "Need strftime"
 #endif
     CB_FMTS("\t<lastupdate>%lld</lastupdate> <!-- %s -->\n\n",
-        (long long) rrd.live_head->last_up, somestring);
+        (long long int) rrd.live_head->last_up, somestring);
     for (i = 0; i < rrd.stat_head->ds_cnt; i++) {
         CB_PUTS("\t<ds>\n");
 
@@ -431,7 +431,7 @@ int rrd_dump_cb_r(
 #else
 # error "Need strftime"
 #endif
-            CB_FMTS("\t\t\t<!-- %s / %lld --> <row>",  somestring, (long long) now);
+            CB_FMTS("\t\t\t<!-- %s / %lld --> <row>",  somestring, (long long int) now);
             for (iii = 0; iii < rrd.stat_head->ds_cnt; iii++) {
                 rrd_read(rrd_file, &my_cdp, sizeof(rrd_value_t) * 1);
                 if (isnan(my_cdp)) {
@@ -449,9 +449,13 @@ int rrd_dump_cb_r(
 
     rrd_free(&rrd);
 
-    setlocale(LC_NUMERIC, old_locale);
-
     return rrd_close(rrd_file);
+
+err_out:
+    rrd_set_error("error writing output file: %s", rrd_strerror(errno));
+    rrd_free(&rrd);
+    rrd_close(rrd_file);
+    return (-1);
 
 //Undefining the previously defined shortcuts
 //See start of this function
@@ -488,8 +492,14 @@ int rrd_dump_opt_r(
 
     res = rrd_dump_cb_r(filename, opt_noheader, rrd_dump_opt_cb_fileout, (void *)out_file);
 
+    if (fflush(out_file) != 0) {
+        rrd_set_error("error flushing output: %s", rrd_strerror(errno));
+        res = -1;
+    }
     if (out_file != stdout) {
         fclose(out_file);
+        if (res != 0)
+            unlink(outname);
     }
 
     return res;
@@ -507,6 +517,14 @@ int rrd_dump(
     int argc,
     char **argv)
 {
+    int       opt;
+    struct optparse_long longopts[] = {
+        {"daemon",    'd', OPTPARSE_REQUIRED},
+        {"header",    'h', OPTPARSE_REQUIRED},
+        {"no-header", 'n', OPTPARSE_NONE},
+        {0},
+    };
+    struct optparse options;
     int       rc;
     /** 
      * 0 = no header
@@ -518,29 +536,13 @@ int rrd_dump(
 
     /* init rrd clean */
 
-    optind = 0;
-    opterr = 0;         /* initialize getopt */
-
-    while (42) {/* ha ha */
-        int       opt;
-        int       option_index = 0;
-        static struct option long_options[] = {
-            {"daemon", required_argument, 0, 'd'},
-            {"header", required_argument, 0, 'h'},
-            {"no-header", no_argument, 0, 'n'},
-            {0, 0, 0, 0}
-        };
-
-        opt = getopt_long(argc, argv, "d:h:n", long_options, &option_index);
-
-        if (opt == EOF)
-            break;
-
+    optparse_init(&options, argc, argv);
+    while ((opt = optparse_long(&options, longopts, NULL)) != -1) {
         switch (opt) {
         case 'd':
             if (opt_daemon != NULL)
                     free (opt_daemon);
-            opt_daemon = strdup (optarg);
+            opt_daemon = strdup(options.optarg);
             if (opt_daemon == NULL)
             {
                 rrd_set_error ("strdup failed.");
@@ -553,37 +555,41 @@ int rrd_dump(
            break;
 
         case 'h':
-	   if (strcmp(optarg, "dtd") == 0) {
+	   if (strcmp(options.optarg, "dtd") == 0) {
 	   	opt_header = 1;
-	   } else if (strcmp(optarg, "xsd") == 0) {
+	   } else if (strcmp(options.optarg, "xsd") == 0) {
 	   	opt_header = 2;
-	   } else if (strcmp(optarg, "none") == 0) {
+	   } else if (strcmp(options.optarg, "none") == 0) {
 	   	opt_header = 0;
 	   }
 	   break;
 
         default:
-            rrd_set_error("usage rrdtool %s [--header|-h {none,xsd,dtd}] [--no-header]"
-                          "file.rrd [file.xml]", argv[0]);
+            rrd_set_error("usage rrdtool %s [--header|-h {none,xsd,dtd}]\n"
+                          "[--no-header|-n]\n"
+                          "[--daemon|-d address]\n"
+                          "file.rrd [file.xml]", options.argv[0]);
             return (-1);
             break;
         }
-    }                   /* while (42) */
+    } /* while (opt != -1) */
 
-    if ((argc - optind) < 1 || (argc - optind) > 2) {
-        rrd_set_error("usage rrdtool %s [--header|-h {none,xsd,dtd}] [--no-header]"
-                      "file.rrd [file.xml]", argv[0]);
+    if ((options.argc - options.optind) < 1 || (options.argc - options.optind) > 2) {
+        rrd_set_error("usage rrdtool %s [--header|-h {none,xsd,dtd}]\n"
+                      "[--no-header|-n]\n"
+                      "[--daemon|-d address]\n"
+                       "file.rrd [file.xml]", options.argv[0]);
         return (-1);
     }
 
-    rc = rrdc_flush_if_daemon(opt_daemon, argv[optind]);
+    rc = rrdc_flush_if_daemon(opt_daemon, options.argv[options.optind]);
     if (opt_daemon) free(opt_daemon);
     if (rc) return (rc);
 
-    if ((argc - optind) == 2) {
-        rc = rrd_dump_opt_r(argv[optind], argv[optind + 1], opt_header);
+    if ((options.argc - options.optind) == 2) {
+        rc = rrd_dump_opt_r(options.argv[options.optind], options.argv[options.optind + 1], opt_header);
     } else {
-        rc = rrd_dump_opt_r(argv[optind], NULL, opt_header);
+        rc = rrd_dump_opt_r(options.argv[options.optind], NULL, opt_header);
     }
 
     return rc;

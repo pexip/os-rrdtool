@@ -1,5 +1,5 @@
 /*****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  * This file:     Copyright 2003 Peter Stamfest <peter@stamfest.at> 
  *                             & Tobias Oetiker
  * Distributed under the GPL
@@ -18,7 +18,7 @@
 /* Key for the thread-specific rrd_context */
 static pthread_key_t context_key;
 
-/* Once-only initialisation of the key */
+/* Once-only initialization of the key */
 static pthread_once_t context_key_once = PTHREAD_ONCE_INIT;
 
 /* Free the thread-specific rrd_context - we might actually use

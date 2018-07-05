@@ -38,17 +38,15 @@
 #endif
 
 
-#include "../../rrd_config.h"
+#include "rrd_config.h"
 static const char *__version__ = PACKAGE_VERSION;
 
 #include "Python.h"
-#include "../../src/rrd_tool.h"
+#include "rrd_tool.h"
 //#include "rrd.h"
 //#include "rrd_extra.h"
 
 static PyObject *ErrorObject;
-extern int optind;
-extern int opterr;
 
 /* forward declaration to keep compiler happy */
 void      initrrdtool(
@@ -114,9 +112,6 @@ static int create_args(
     (*argv)[0] = command;
     *argc = element_count + 1;
 
-    /* reset getopt state */
-    opterr = optind = 0;
-
     return 0;
 }
 
@@ -139,12 +134,16 @@ static PyObject *PyRRD_create(
 {
     PyObject *r;
     char    **argv;
-    int       argc;
+    int       argc, status;
 
     if (create_args("create", args, &argc, &argv) < 0)
         return NULL;
 
-    if (rrd_create(argc, argv) == -1) {
+    Py_BEGIN_ALLOW_THREADS
+    status = rrd_create(argc, argv);
+    Py_END_ALLOW_THREADS
+
+    if (status == -1) {
         PyErr_SetString(ErrorObject, rrd_get_error());
         rrd_clear_error();
         r = NULL;
@@ -168,12 +167,16 @@ static PyObject *PyRRD_update(
 {
     PyObject *r;
     char    **argv;
-    int       argc;
+    int       argc, status;
 
     if (create_args("update", args, &argc, &argv) < 0)
         return NULL;
 
-    if (rrd_update(argc, argv) == -1) {
+    Py_BEGIN_ALLOW_THREADS
+    status = rrd_update(argc, argv);
+    Py_END_ALLOW_THREADS
+
+    if (status == -1) {
         PyErr_SetString(ErrorObject, rrd_get_error());
         rrd_clear_error();
         r = NULL;
@@ -199,14 +202,17 @@ static PyObject *PyRRD_fetch(
     rrd_value_t *data, *datai;
     unsigned long step, ds_cnt;
     time_t    start, end;
-    int       argc;
+    int       argc, status;
     char    **argv, **ds_namv;
 
     if (create_args("fetch", args, &argc, &argv) < 0)
         return NULL;
 
-    if (rrd_fetch(argc, argv, &start, &end, &step,
-                  &ds_cnt, &ds_namv, &data) == -1) {
+    Py_BEGIN_ALLOW_THREADS
+    status = rrd_fetch(argc, argv, &start, &end, &step, &ds_cnt, &ds_namv, &data);
+    Py_END_ALLOW_THREADS
+
+    if (status == -1) {
         PyErr_SetString(ErrorObject, rrd_get_error());
         rrd_clear_error();
         r = NULL;
@@ -261,6 +267,8 @@ static PyObject *PyRRD_fetch(
     return r;
 }
 
+#ifdef HAVE_RRD_GRAPH
+
 static char PyRRD_graph__doc__[] =
     "graph(args..): Create a graph based on data from one or several RRD\n"
     "    graph filename [-s|--start seconds] "
@@ -288,14 +296,17 @@ static PyObject *PyRRD_graph(
 {
     PyObject *r;
     char    **argv, **calcpr;
-    int       argc, xsize, ysize, i;
+    int       argc, status, xsize, ysize, i;
     double    ymin, ymax;
 
     if (create_args("graph", args, &argc, &argv) < 0)
         return NULL;
 
-    if (rrd_graph(argc, argv, &calcpr, &xsize, &ysize, NULL, &ymin, &ymax) ==
-        -1) {
+    Py_BEGIN_ALLOW_THREADS
+    status = rrd_graph(argc, argv, &calcpr, &xsize, &ysize, NULL, &ymin, &ymax);
+    Py_END_ALLOW_THREADS
+
+    if (status == -1) {
         PyErr_SetString(ErrorObject, rrd_get_error());
         rrd_clear_error();
         r = NULL;
@@ -328,6 +339,8 @@ static PyObject *PyRRD_graph(
     return r;
 }
 
+#endif /* HAVE_RRD_GRAPH */
+
 static char PyRRD_tune__doc__[] =
     "tune(args...): Modify some basic properties of a Round Robin Database\n"
     "    tune filename [--heartbeat|-h ds-name:heartbeat] "
@@ -340,12 +353,16 @@ static PyObject *PyRRD_tune(
 {
     PyObject *r;
     char    **argv;
-    int       argc;
+    int       argc, status;
 
     if (create_args("tune", args, &argc, &argv) < 0)
         return NULL;
 
-    if (rrd_tune(argc, argv) == -1) {
+    Py_BEGIN_ALLOW_THREADS
+    status = rrd_tune(argc, argv);
+    Py_END_ALLOW_THREADS
+
+    if (status == -1) {
         PyErr_SetString(ErrorObject, rrd_get_error());
         rrd_clear_error();
         r = NULL;
@@ -372,7 +389,11 @@ static PyObject *PyRRD_first(
     if (create_args("first", args, &argc, &argv) < 0)
         return NULL;
 
-    if ((ts = rrd_first(argc, argv)) == -1) {
+    Py_BEGIN_ALLOW_THREADS
+    ts = rrd_first(argc, argv);
+    Py_END_ALLOW_THREADS
+
+    if (ts == -1) {
         PyErr_SetString(ErrorObject, rrd_get_error());
         rrd_clear_error();
         r = NULL;
@@ -397,7 +418,11 @@ static PyObject *PyRRD_last(
     if (create_args("last", args, &argc, &argv) < 0)
         return NULL;
 
-    if ((ts = rrd_last(argc, argv)) == -1) {
+    Py_BEGIN_ALLOW_THREADS
+    ts = rrd_last(argc, argv);
+    Py_END_ALLOW_THREADS
+
+    if (ts == -1) {
         PyErr_SetString(ErrorObject, rrd_get_error());
         rrd_clear_error();
         r = NULL;
@@ -423,7 +448,11 @@ static PyObject *PyRRD_resize(
     if (create_args("resize", args, &argc, &argv) < 0)
         return NULL;
 
-    if ((ts = rrd_resize(argc, argv)) == -1) {
+    Py_BEGIN_ALLOW_THREADS
+    ts = rrd_resize(argc, argv);
+    Py_END_ALLOW_THREADS
+
+    if (ts == -1) {
         PyErr_SetString(ErrorObject, rrd_get_error());
         rrd_clear_error();
         r = NULL;
@@ -490,7 +519,11 @@ static PyObject *PyRRD_info(
     if (create_args("info", args, &argc, &argv) < 0)
         return NULL;
 
-    if ((data = rrd_info(argc, argv)) == NULL) {
+    Py_BEGIN_ALLOW_THREADS
+    data = rrd_info(argc, argv);
+    Py_END_ALLOW_THREADS
+
+    if (data == NULL) {
         PyErr_SetString(ErrorObject, rrd_get_error());
         rrd_clear_error();
         r = NULL;
@@ -502,6 +535,8 @@ static PyObject *PyRRD_info(
     destroy_args(&argv);
     return r;
 }
+
+#ifdef HAVE_RRD_GRAPH
 
 static char PyRRD_graphv__doc__[] =
     "graphv is called in the same manner as graph";
@@ -518,7 +553,11 @@ static PyObject *PyRRD_graphv(
     if (create_args("graphv", args, &argc, &argv) < 0)
         return NULL;
 
-    if ((data = rrd_graph_v(argc, argv)) == NULL) {
+    Py_BEGIN_ALLOW_THREADS
+    data = rrd_graph_v(argc, argv);
+    Py_END_ALLOW_THREADS
+
+    if (data == NULL) {
         PyErr_SetString(ErrorObject, rrd_get_error());
         rrd_clear_error();
         r = NULL;
@@ -530,6 +569,8 @@ static PyObject *PyRRD_graphv(
     destroy_args(&argv);
     return r;
 }
+
+#endif /* HAVE_RRD_GRAPH */
 
 static char PyRRD_updatev__doc__[] =
     "updatev is called in the same manner as update";
@@ -546,7 +587,11 @@ static PyObject *PyRRD_updatev(
     if (create_args("updatev", args, &argc, &argv) < 0)
         return NULL;
 
-    if ((data = rrd_update_v(argc, argv)) == NULL) {
+    Py_BEGIN_ALLOW_THREADS
+    data = rrd_update_v(argc, argv);
+    Py_END_ALLOW_THREADS
+
+    if (data == NULL) {
         PyErr_SetString(ErrorObject, rrd_get_error());
         rrd_clear_error();
         r = NULL;
@@ -568,13 +613,17 @@ static PyObject *PyRRD_flushcached(
     PyObject * args)
 {
     PyObject *r;
-    int       argc;
+    int       argc, status;
     char    **argv;
 
     if (create_args("flushcached", args, &argc, &argv) < 0)
         return NULL;
 
-    if (rrd_flushcached(argc, argv) != 0) {
+    Py_BEGIN_ALLOW_THREADS
+    status = rrd_flushcached(argc, argv);
+    Py_END_ALLOW_THREADS
+
+    if (status != 0) {
         PyErr_SetString(ErrorObject, rrd_get_error());
         rrd_clear_error();
         r = NULL;
@@ -586,6 +635,8 @@ static PyObject *PyRRD_flushcached(
     destroy_args(&argv);
     return r;
 }
+
+#ifdef HAVE_RRD_GRAPH
 
 static char PyRRD_xport__doc__[] =
     "xport(args..): dictionary representation of data stored in RRDs\n"
@@ -599,7 +650,7 @@ static PyObject *PyRRD_xport(
     PyObject * args)
 {
     PyObject *r;
-    int       argc, xsize;
+    int       argc, status, xsize;
     char    **argv, **legend_v;
     time_t    start, end;
     unsigned long step, col_cnt;
@@ -608,8 +659,11 @@ static PyObject *PyRRD_xport(
     if (create_args("xport", args, &argc, &argv) < 0)
         return NULL;
 
-    if (rrd_xport(argc, argv, &xsize, &start, &end,
-                  &step, &col_cnt, &legend_v, &data) == -1) {
+    Py_BEGIN_ALLOW_THREADS
+    status = rrd_xport(argc, argv, &xsize, &start, &end, &step, &col_cnt, &legend_v, &data);
+    Py_END_ALLOW_THREADS
+
+    if (status == -1) {
         PyErr_SetString(ErrorObject, rrd_get_error());
         rrd_clear_error();
         r = NULL;
@@ -618,7 +672,7 @@ static PyObject *PyRRD_xport(
         unsigned long i, j;
         rrd_value_t dv;
 
-        unsigned long row_cnt = ((end - start) / step) + 1;
+        unsigned long row_cnt = ((end - start) / step);
 
         r = PyDict_New();
         meta_dict = PyDict_New();
@@ -665,6 +719,40 @@ static PyObject *PyRRD_xport(
     return r;
 }
 
+#endif
+
+static char PyRRD_dump__doc__[] =
+    "dump - dump an RRD to XML\n"
+    "[--header|-h {none,xsd,dtd}] [--no-header]file.rrd [file.xml]";
+
+static PyObject *PyRRD_dump(
+    PyObject UNUSED(*self),
+    PyObject * args)
+{
+    PyObject *r;
+    int       argc, status;
+    char    **argv;
+
+    if (create_args("dump", args, &argc, &argv) < 0)
+        return NULL;
+
+    Py_BEGIN_ALLOW_THREADS
+    status = rrd_dump(argc, argv);
+    Py_END_ALLOW_THREADS
+
+    if (status != 0) {
+        PyErr_SetString(ErrorObject, rrd_get_error());
+        rrd_clear_error();
+        r = NULL;
+    } else {
+        Py_INCREF(Py_None);
+        r = Py_None;
+    }
+
+    destroy_args(&argv);
+    return r;
+}
+
 /* List of methods defined in the module */
 #define meth(name, func, doc) {name, (PyCFunction)func, METH_VARARGS, doc}
 
@@ -672,16 +760,19 @@ static PyMethodDef _rrdtool_methods[] = {
     meth("create", PyRRD_create, PyRRD_create__doc__),
     meth("update", PyRRD_update, PyRRD_update__doc__),
     meth("fetch", PyRRD_fetch, PyRRD_fetch__doc__),
-    meth("graph", PyRRD_graph, PyRRD_graph__doc__),
     meth("tune", PyRRD_tune, PyRRD_tune__doc__),
     meth("first", PyRRD_first, PyRRD_first__doc__),
     meth("last", PyRRD_last, PyRRD_last__doc__),
     meth("resize", PyRRD_resize, PyRRD_resize__doc__),
     meth("info", PyRRD_info, PyRRD_info__doc__),
+#ifdef HAVE_RRD_GRAPH    
+    meth("graph", PyRRD_graph, PyRRD_graph__doc__),
     meth("graphv", PyRRD_graphv, PyRRD_graphv__doc__),
+    meth("xport", PyRRD_xport, PyRRD_xport__doc__),
+#endif
     meth("updatev", PyRRD_updatev, PyRRD_updatev__doc__),
     meth("flushcached", PyRRD_flushcached, PyRRD_flushcached__doc__),
-    meth("xport", PyRRD_xport, PyRRD_xport__doc__),
+    meth("dump", PyRRD_dump, PyRRD_dump__doc__),
     {NULL, NULL, 0, NULL}
 };
 

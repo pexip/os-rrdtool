@@ -267,6 +267,8 @@ lua_rrd_last (lua_State * L)
   return 1;
 }
 
+#ifdef HAVE_RRD_GRAPH
+
 static int
 lua_rrd_graph (lua_State * L)
 {
@@ -292,6 +294,8 @@ lua_rrd_graph (lua_State * L)
   return 3;
 }
 
+#endif
+
 static int
 lua_rrd_flushcached(lua_State *L)
 {
@@ -305,11 +309,15 @@ lua_rrd_info (lua_State * L)
   return lua_rrd_infocall(L, "info", rrd_info);
 }
 
+#ifdef HAVE_RRD_GRAPH
+
 static int
 lua_rrd_graphv (lua_State * L)
 {
   return lua_rrd_infocall(L, "graphv", rrd_graph_v);
 }
+
+#endif
 
 static int
 lua_rrd_updatev (lua_State * L)
@@ -342,12 +350,20 @@ set_info (lua_State * L)
 
 /**********************************************************/
 
+#if defined LUA50
 static const struct luaL_reg rrd[] = {
+#elif LUA_VERSION_NUM == 501
+static const struct luaL_Reg rrd[] = {
+#else
+static const struct luaL_Reg rrd[] = {
+#endif
   {"create", lua_rrd_create},
   {"dump", lua_rrd_dump},
   {"fetch", lua_rrd_fetch},
   {"first", lua_rrd_first},
+#ifdef HAVE_RRD_GRAPH
   {"graph", lua_rrd_graph},
+#endif
   {"last", lua_rrd_last},
   {"resize", lua_rrd_resize},
   {"restore", lua_rrd_restore},
@@ -372,8 +388,11 @@ luaopen_rrd (lua_State * L)
 #if defined LUA50
   /* luaL_module is defined in compat-5.1.c */
   luaL_module (L, "rrd", rrd, 0);
-#else
+#elif LUA_VERSION_NUM == 501
+  /* version 5.1 */
   luaL_register (L, "rrd", rrd);
+#else
+  luaL_newlib(L, rrd);
 #endif
   set_info (L);
   return 1;
