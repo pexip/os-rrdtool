@@ -20,7 +20,7 @@ Vcs-Browser: http://git.snow-crash.org/?p=pkg-rrdtool.git;a=summary
 Vcs-Git: git://git.snow-crash.org/pkg-rrdtool.git/
 X-Python-Version: >= 2.3
 XS-Ruby-Versions: all
-XS-Pexip-Upstream: http://ftp.debian.org/debian/ jessie
+XS-Pexip-Upstream: http://ftp.debian.org/debian/ stretch
 
 Package: rrdtool
 Architecture: any
