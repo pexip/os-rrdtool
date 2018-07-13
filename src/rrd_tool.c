@@ -1,19 +1,16 @@
 /*****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  *****************************************************************************
  * rrd_tool.c  Startup wrapper
  *****************************************************************************/
 
-#if defined(WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__) && !defined(HAVE_CONFIG_H)
-#include "../win32/config.h"
+#include "rrd_config.h"
+
+#if defined(WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <io.h>
 #include <fcntl.h>
-#else
-#ifdef HAVE_CONFIG_H
-#include "../rrd_config.h"
-#endif
 #endif
 
 #include "rrd_tool.h"
@@ -49,14 +46,14 @@ void PrintUsage(
 
     const char *help_main =
         N_("RRDtool %s"
-           "  Copyright 1997-2013 by Tobias Oetiker <tobi@oetiker.ch>\n"
+           "  Copyright by Tobias Oetiker <tobi@oetiker.ch>\n"
            "               Compiled %s %s\n\n"
            "Usage: rrdtool [options] command command_options\n");
 
     const char *help_list =
         N_
         ("Valid commands: create, update, updatev, graph, graphv,  dump, restore,\n"
-         "\t\tlast, lastupdate, first, info, fetch, tune,\n"
+         "\t\tlast, lastupdate, first, info, fetch, tune\n"
          "\t\tresize, xport, flushcached\n");
 
     const char *help_listremote =
@@ -67,17 +64,23 @@ void PrintUsage(
         N_("* create - create a new RRD\n\n"
            "\trrdtool create filename [--start|-b start time]\n"
            "\t\t[--step|-s step]\n"
+           "\t\t[--template|-t template-file]\n"
+           "\t\t[--source|-r source-file]\n"
            "\t\t[--no-overwrite|-O]\n"
+           "\t\t[--daemon|-d address]\n"
            "\t\t[DS:ds-name:DST:dst arguments]\n"
            "\t\t[RRA:CF:cf arguments]\n");
 
     const char *help_dump =
         N_("* dump - dump an RRD to XML\n\n"
-           "\trrdtool dump filename.rrd >filename.xml\n");
+           "\trrdtool dump [--header|-h {none,xsd,dtd}]\n"
+           "\t\t[--no-header|-n]\n"
+           "\t\t[--daemon|-d address]\n"
+           "\t\tfile.rrd [file.xml]");
 
     const char *help_info =
         N_("* info - returns the configuration and status of the RRD\n\n"
-           "\trrdtool info filename.rrd\n");
+           "\trrdtool info [--daemon|-d <addr> [--noflush|-F]] filename.rrd\n");
 
     const char *help_restore =
         N_("* restore - restore an RRD file from its XML form\n\n"
@@ -85,21 +88,25 @@ void PrintUsage(
 
     const char *help_last =
         N_("* last - show last update time for RRD\n\n"
-           "\trrdtool last filename.rrd\n");
+           "\trrdtool last filename.rrd\n"
+           "\t\t[--daemon|-d address]\n");
 
     const char *help_lastupdate =
         N_("* lastupdate - returns the most recent datum stored for\n"
-           "  each DS in an RRD\n\n" "\trrdtool lastupdate filename.rrd\n");
+           "  each DS in an RRD\n\n"
+           "\trrdtool lastupdate filename.rrd\n"
+           "\t\t[--daemon|-d address]\n");
 
     const char *help_first =
         N_("* first - show first update time for RRA within an RRD\n\n"
-           "\trrdtool first filename.rrd [--rraindex number]\n");
+           "\trrdtool first filename.rrd [--rraindex number] [--daemon|-d address]\n");
 
     const char *help_update =
         N_("* update - update an RRD\n\n"
            "\trrdtool update filename\n"
            "\t\t[--template|-t ds-name:ds-name:...]\n"
-	   "\t\t[--daemon <address>]\n"
+           "\t\t[--skip-past-updates|-s]\n"
+	   "\t\t[--daemon|-d <address>]\n"
            "\t\ttime|N:value[:value...]\n\n"
            "\t\tat-time@value[:value...]\n\n"
            "\t\t[ time:value[:value...] ..]\n");
@@ -109,6 +116,7 @@ void PrintUsage(
            "\treturns information about values, RRAs, and datasources updated\n\n"
            "\trrdtool updatev filename\n"
            "\t\t[--template|-t ds-name:ds-name:...]\n"
+           "\t\t[--skip-past-updates|-s]\n"
            "\t\ttime|N:value[:value...]\n\n"
            "\t\tat-time@value[:value...]\n\n"
            "\t\t[ time:value[:value...] ..]\n");
@@ -118,12 +126,13 @@ void PrintUsage(
            "\trrdtool fetch filename.rrd CF\n"
            "\t\t[-r|--resolution resolution]\n"
            "\t\t[-s|--start start] [-e|--end end]\n"
-	   "\t\t[--daemon <address>]\n");
+           "\t\t[-a|--align-start]\n"
+           "\t\t[-d|--daemon <address>]\n");
 
     const char *help_flushcached =
         N_("* flushcached - flush cached data out to an RRD file\n\n"
            "\trrdtool flushcached filename.rrd\n"
-	   "\t\t[--daemon <address>]\n");
+	   "\t\t[-d|--daemon <address>]\n");
 
 /* break up very large strings (help_graph, help_tune) for ISO C89 compliance*/
 
@@ -137,6 +146,7 @@ void PrintUsage(
     const char *help_graph1 =
         N_("\t\t[-x|--x-grid x-axis grid and label]\n"
            "\t\t[-Y|--alt-y-grid] [--full-size-mode]\n"
+           "\t\t[--left-axis-format format]\n"
            "\t\t[-y|--y-grid y-axis grid and label]\n"
            "\t\t[-v|--vertical-label string] [-w|--width pixels]\n"
            "\t\t[--right-axis scale:shift] [--right-axis-label label]\n"
@@ -144,7 +154,7 @@ void PrintUsage(
            "\t\t[-h|--height pixels] [-o|--logarithmic]\n"
            "\t\t[-u|--upper-limit value] [-z|--lazy]\n"
            "\t\t[-l|--lower-limit value] [-r|--rigid]\n"
-           "\t\t[-g|--no-legend] [--daemon <address>]\n"
+           "\t\t[-g|--no-legend] [-d|--daemon <address>]\n"
            "\t\t[-F|--force-rules-legend]\n" "\t\t[-j|--only-graph]\n");
     const char *help_graph2 =
         N_("\t\t[-n|--font FONTTAG:size:font]\n"
@@ -167,6 +177,7 @@ void PrintUsage(
            "\t\t[--border width\n"
            "\t\t[-t|--title string]\n"
            "\t\t[-W|--watermark string]\n"
+           "\t\t[-Z|--use-nan-for-all-missing-data]\n"
            "\t\t[DEF:vname=rrd:ds-name:CF]\n");
     const char *help_graph3 =
         N_("\t\t[CDEF:vname=rpn-expression]\n"
@@ -190,15 +201,25 @@ void PrintUsage(
            "\t\t[--data-source-type|-d ds-name:DST]\n"
            "\t\t[--data-source-rename|-r old-name:new-name]\n"
            "\t\t[--minimum|-i ds-name:min] [--maximum|-a ds-name:max]\n"
-           "\t\t[--deltapos scale-value] [--deltaneg scale-value]\n"
-           "\t\t[--failure-threshold integer]\n"
-           "\t\t[--window-length integer]\n"
-           "\t\t[--alpha adaptation-parameter]\n");
+           "\t\t[--deltapos|-p scale-value] [--deltaneg|-n scale-value]\n"
+           "\t\t[--failure-threshold|-f integer]\n"
+           "\t\t[--window-length|-w integer]\n"
+           "\t\t[--alpha|-x adaptation-parameter]\n");
     const char *help_tune2 =
-        N_("\t\t[--beta adaptation-parameter]\n"
-           "\t\t[--gamma adaptation-parameter]\n"
-           "\t\t[--gamma-deviation adaptation-parameter]\n"
-           "\t\t[--aberrant-reset ds-name]\n");
+        N_("\t\t[--beta|-y adaptation-parameter]\n"
+           "\t\t[--gamma|-z adaptation-parameter]\n"
+           "\t\t[--gamma-deviation|-v adaptation-parameter]\n"
+           "\t\t[--smoothing-window|-s fraction-of-season]\n"
+           "\t\t[--smoothing-window-deviation|-S fraction-of-season]\n"
+           "\t\t[--aberrant-reset|-b ds-name]\n");
+    const char *help_tune3 = 
+        N_("\t\t[--step|-t newstep]\n"
+           "\t\t[--daemon|-D address]\n"
+           "\t\t[DEL:ds-name]\n"
+           "\t\t[DS:ds-spec]\n"
+           "\t\t[DELRRA:index]\n"
+           "\t\t[RRA:rra-spec]\n"
+           "\t\t[RRA#index:[+-=]number]\n");
     const char *help_resize =
         N_
         (" * resize - alter the length of one of the RRAs in an RRD\n\n"
@@ -207,7 +228,9 @@ void PrintUsage(
         N_("* xport - generate XML dump from one or several RRD\n\n"
            "\trrdtool xport [-s|--start seconds] [-e|--end seconds]\n"
            "\t\t[-m|--maxrows rows]\n" "\t\t[--step seconds]\n"
-           "\t\t[--enumds] [--json]\n" "\t\t[DEF:vname=rrd:ds-name:CF]\n"
+           "\t\t[--enumds] [--json]\n"
+           "\t\t[-d|--daemon address]\n"
+           "\t\t[DEF:vname=rrd:ds-name:CF]\n"
            "\t\t[CDEF:vname=rpn-expression]\n"
            "\t\t[XPORT:vname:legend]\n");
     const char *help_quit =
@@ -338,6 +361,7 @@ void PrintUsage(
     case C_TUNE:
         puts(_(help_tune1));
         puts(_(help_tune2));
+	puts(_(help_tune3));
         break;
     case C_RESIZE:
         puts(_(help_resize));
@@ -374,7 +398,7 @@ static char *fgetslong(
 
     if (feof(stream))
         return *aLinePtr = 0;
-    if (!(linebuf = malloc(bufsize))) {
+    if (!(linebuf = (char *) malloc(bufsize))) {
         perror("fgetslong: malloc");
         exit(1);
     }
@@ -384,7 +408,7 @@ static char *fgetslong(
         if (linebuf[eolpos - 1] == '\n')
             return *aLinePtr = linebuf;
         bufsize += MAX_LENGTH;
-        if (!(linebuf = realloc(linebuf, bufsize))) {
+        if (!(linebuf = (char *) realloc(linebuf, bufsize))) {
             free(linebuf);
             perror("fgetslong: realloc");
             exit(1);
@@ -441,14 +465,11 @@ int main(
 #endif
         RemoteMode = 1;
         if ((argc == 3) && strcmp("", argv[2])) {
-
-            if (
-#ifdef HAVE_GETUID
-                   getuid()
-#else
-                   1
+            int test_euid = 0;            
+#ifdef HAVE_GETEUID
+            test_euid = geteuid() == 0;
 #endif
-                   == 0) {
+            if (test_euid) {
 
 #ifdef HAVE_CHROOT
                 if (chroot(argv[2]) != 0){
@@ -534,9 +555,6 @@ int HandleInputLine(
     DIR      *curdir;   /* to read current dir with ls */
     struct dirent *dent;
 #endif
-#if defined(HAVE_SYS_STAT_H)
-    struct stat st;
-#endif
 
     /* Reset errno to 0 before we start.
      */
@@ -548,7 +566,7 @@ int HandleInputLine(
             }
             exit(0);
         }
-#if defined(HAVE_OPENDIR) && defined(HAVE_READDIR) && defined(HAVE_CHDIR)
+#if defined(HAVE_OPENDIR) && defined(HAVE_READDIR) && defined(HAVE_CHDIR) && defined(HAVE_SYS_STAT_H)
         if (argc > 1 && strcmp("cd", argv[1]) == 0) {
             if (argc != 3) {
                 printf("ERROR: invalid parameter count for cd\n");
@@ -574,7 +592,13 @@ int HandleInputLine(
                 printf("ERROR: invalid parameter count for pwd\n");
                 return (1);
             }
+#ifdef MAXPATH
             cwd = getcwd(NULL, MAXPATH);
+#elif defined(HAVE_GET_CURRENT_DIR_NAME)
+            cwd = get_current_dir_name();
+#else
+#error "You must have either MAXPATH or get_current_dir_name()"
+#endif
             if (cwd == NULL) {
                 printf("ERROR: getcwd %s\n", rrd_strerror(errno));
                 return (1);
@@ -608,6 +632,7 @@ int HandleInputLine(
                 return (1);
             }
             if ((curdir = opendir(".")) != NULL) {
+                struct stat st;
                 while ((dent = readdir(curdir)) != NULL) {
                     if (!stat(dent->d_name, &st)) {
                         if (S_ISDIR(st.st_mode)) {
@@ -663,10 +688,14 @@ int HandleInputLine(
              strcmp("v", argv[1]) == 0 ||
              strcmp("-v", argv[1]) == 0 || strcmp("-version", argv[1]) == 0)
         printf("RRDtool " PACKAGE_VERSION
-               "  Copyright by Tobi Oetiker, 1997-2008 (%f)\n",
+               "  Copyright by Tobi Oetiker (%f)\n",
                rrd_version());
     else if (strcmp("restore", argv[1]) == 0)
+#ifdef HAVE_RRD_RESTORE
         rrd_restore(argc - 1, &argv[1]);
+#else
+	rrd_set_error("the instance of rrdtool has been compiled without XML import functions");
+#endif
     else if (strcmp("resize", argv[1]) == 0)
         rrd_resize(argc - 1, &argv[1]);
     else if (strcmp("last", argv[1]) == 0)
@@ -704,146 +733,13 @@ int HandleInputLine(
         }
     } else if (strcmp("xport", argv[1]) == 0) {
 #ifdef HAVE_RRD_GRAPH
-        int       xxsize;
-        unsigned long int j = 0;
-        time_t    start, end, ti;
-        unsigned long step, col_cnt, row_cnt;
-        rrd_value_t *data, *ptr;
-        char    **legend_v;
-        int       enumds = 0;
-        int       json = 0;
-        int       i;
-        size_t    vtag_s = strlen(COL_DATA_TAG) + 10;
-        char     *vtag = malloc(vtag_s);
-
-        for (i = 2; i < argc; i++) {
-            if (strcmp("--enumds", argv[i]) == 0)
-                enumds = 1;
-            if (strcmp("--json", argv[i]) == 0)
-                json = 1;
-        }
-
-        if (rrd_xport
-            (argc - 1, &argv[1], &xxsize, &start, &end, &step, &col_cnt,
-             &legend_v, &data) == 0) {
-            char *old_locale = setlocale(LC_NUMERIC,NULL);
-            setlocale(LC_NUMERIC, "C");
-            row_cnt = (end - start) / step;
-            ptr = data;
-            if (json == 0){
-                printf("<?xml version=\"1.0\" encoding=\"%s\"?>\n\n",
-                    XML_ENCODING);
-                printf("<%s>\n", ROOT_TAG);
-                printf("  <%s>\n", META_TAG);
-            }
-            else {
-                printf("{ about: 'RRDtool xport JSON output',\n  meta: {\n");
-            }
-
-
-#define pXJV(indent,fmt,tag,value) \
-            if (json) { \
-               printf(indent "\"%s\": " fmt ",\n",tag,value); \
-            } else { \
-               printf(indent "<%s>" fmt "</%s>\n",tag,value,tag); \
-            }
-        
-            pXJV("    ","%lld",META_START_TAG,(long long int) start + step);
-            pXJV("    ","%lu", META_STEP_TAG, step);
-            pXJV("    ","%lld",META_END_TAG,(long long int) start + step);
-            if (! json){
-                    pXJV("    ","%lu", META_ROWS_TAG, row_cnt);
-                    pXJV("    ","%lu", META_COLS_TAG, col_cnt);
-            }
-             
-            if (json){
-                printf("    \"%s\": [\n", LEGEND_TAG);
-            }
-            else {
-                printf("    <%s>\n", LEGEND_TAG);
-            }
-            for (j = 0; j < col_cnt; j++) {
-                char     *entry = NULL;
-                entry = legend_v[j];
-                if (json){
-                    printf("      '%s'", entry);
-                    if (j < col_cnt -1){
-                        printf(",");
-                    }
-                    printf("\n");
-                }
-                else {
-                    printf("      <%s>%s</%s>\n", LEGEND_ENTRY_TAG, entry,
-                       LEGEND_ENTRY_TAG);
-                }
-                free(entry);
-            }
-            free(legend_v);
-            if (json){
-                printf("          ]\n     },\n");
-            }
-            else {
-                printf("    </%s>\n", LEGEND_TAG);
-                printf("  </%s>\n", META_TAG);
-            }
-            
-            if (json){
-                printf("  \"%s\": [\n",DATA_TAG);
-            } else {
-                printf("  <%s>\n", DATA_TAG);
-            }
-            for (ti = start + step; ti <= end; ti += step) {
-                if (json){
-                    printf("    [ ");
-                }
-                else {
-                    printf("    <%s>", DATA_ROW_TAG);
-                    printf("<%s>%lld</%s>", COL_TIME_TAG, (long long int)ti, COL_TIME_TAG);
-                }
-                for (j = 0; j < col_cnt; j++) {
-                    rrd_value_t newval = DNAN;
-                    newval = *ptr;
-                    if (json){
-                        if (isnan(newval)){
-                            printf("null");                        
-                        } else {
-                            printf("%0.10e",newval);
-                        }
-                        if (j < col_cnt -1){
-                            printf(", ");
-                        }
-                    }
-                    else {
-                        if (enumds == 1)
-                            snprintf(vtag, vtag_s, "%s%lu", COL_DATA_TAG, j);
-                        else
-                           snprintf(vtag, vtag_s, "%s", COL_DATA_TAG);
-                        if (isnan(newval)) {
-                           printf("<%s>NaN</%s>", vtag, vtag);
-                        } else {
-                           printf("<%s>%0.10e</%s>", vtag, newval, vtag);
-                        };
-                    }
-                    ptr++;
-                }                
-                if (json){
-                    printf(ti < end ? " ],\n" : "  ]\n");
-                }
-                else {                
-                    printf("</%s>\n", DATA_ROW_TAG);
-                }
-            }
-            free(data);
-            if (json){
-                printf("  ]\n}\n");
-            }
-            else {
-                printf("  </%s>\n", DATA_TAG);
-                printf("</%s>\n", ROOT_TAG);
-            }
-            setlocale(LC_NUMERIC, old_locale);
-        }
-        free(vtag);
+      time_t    start, end;
+      unsigned long step, col_cnt;
+      rrd_value_t *data;
+      char    **legend_v;
+      rrd_xport
+	(argc - 1, &argv[1], NULL, &start, &end, &step, &col_cnt,
+	 &legend_v, &data);
 #else
         rrd_set_error("the instance of rrdtool has been compiled without graphics");
 #endif
@@ -899,10 +795,8 @@ int HandleInputLine(
 #endif
     } else if (strcmp("tune", argv[1]) == 0)
         rrd_tune(argc - 1, &argv[1]);
-#ifndef WIN32
     else if (strcmp("flushcached", argv[1]) == 0)
         rrd_flushcached(argc - 1, &argv[1]);
-#endif
     else {
         rrd_set_error("unknown function '%s'", argv[1]);
     }

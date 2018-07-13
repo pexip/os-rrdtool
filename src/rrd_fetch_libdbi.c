@@ -1,5 +1,6 @@
 #include "rrd_tool.h"
 #include "unused.h"
+#include "rrd_strtod.h"
 #include <dbi/dbi.h>
 #include <time.h>
 
@@ -94,14 +95,20 @@ static double rrd_fetch_dbi_double(dbi_result *result,int idx) {
   /* get the attributes for this filed */
   unsigned int attr=dbi_result_get_field_attribs_idx(result,idx);
   unsigned int type=dbi_result_get_field_type_idx(result,idx);
+  unsigned int strtod_ret_val;
   /* return NAN if NULL */
   if(dbi_result_field_is_null_idx(result,idx)) { return DNAN; }
   /* do some conversions */
   switch (type) {
     case DBI_TYPE_STRING:
       ptmp=(char*)dbi_result_get_string_idx(result,idx);
-      value=strtod(ptmp,NULL);
-      break;
+      strtod_ret_val = rrd_strtodbl(ptmp,NULL, &value, "rrd_fetch_dbi_double, DBI_TYPE_STRING");
+      if( strtod_ret_val == 1 || strtod_ret_val == 2 ) {
+        break;
+      } else {
+        value = DNAN;
+        break;
+      }
     case DBI_TYPE_INTEGER:
       if        (attr & DBI_INTEGER_SIZE1) { value=dbi_result_get_char_idx(result,idx);
       } else if (attr & DBI_INTEGER_SIZE2) { value=dbi_result_get_short_idx(result,idx);
@@ -130,7 +137,7 @@ static double rrd_fetch_dbi_double(dbi_result *result,int idx) {
 	}
       }
       /* convert to number */
-      value=strtod(ptmp,NULL);
+      strtod_ret_val = rrd_strtodbl(ptmp,NULL, &value, "rrd_fetch_dbi_double, DBI_TYPE_BINARY");
       /* free pointer */
       free(ptmp);
       break;
@@ -192,11 +199,20 @@ static int _sql_setparam(struct sql_table_helper* th,char* key, char* value) {
     return -1; 
   }
   if (getenv("RRDDEBUGSQL")) { fprintf(stderr,"RRDDEBUGSQL: %li: setting option %s to %s\n",time(NULL),key,value ); }
-  if (dbi_conn_set_option(th->conn,key,value)) {
-    dbi_conn_error(th->conn,(const char**)&dbi_errstr);
-    rrd_set_error( "libdbi: problems setting %s to %s - %s",key,value,dbi_errstr);
-    _sql_close(th);
-    return -1;
+  if (strcmp(key, "port") == 0) {
+    if (dbi_conn_set_option_numeric(th->conn,key,atoi(value))) {
+      dbi_conn_error(th->conn,(const char**)&dbi_errstr);
+      rrd_set_error( "libdbi: problems setting %s to %d - %s",key,value,dbi_errstr);
+      _sql_close(th);
+      return -1;
+    }
+  } else {
+    if (dbi_conn_set_option(th->conn,key,value)) {
+      dbi_conn_error(th->conn,(const char**)&dbi_errstr);
+      rrd_set_error( "libdbi: problems setting %s to %s - %s",key,value,dbi_errstr);
+      _sql_close(th);
+      return -1;
+    }
   }
   return 0;
 }
@@ -294,7 +310,7 @@ static char* _find_next_separator_twice(char*start,char separator) {
       /* and return the pointer past the current one*/
       return (found+2);
     }
-    /* find next occurance */
+    /* find next occurence */
     found=strchr(found+1,separator);
   }
   /* not found, so return NULL */
@@ -337,7 +353,7 @@ static int _inline_unescape (char* string) {
     src++;
     if (c == '%') {
       if (*src == '%') { 
-	/* increase src pointer by 1 skiping second % */
+	/* increase src pointer by 1 skipping second % */
 	src+=1;
       } else {
 	/* try to calculate hex value from the next 2 values*/
@@ -352,7 +368,7 @@ static int _inline_unescape (char* string) {
 	  return(1);
 	}
 	c=h2+(h1<<4);
-	/* increase src pointer by 2 skiping 2 chars */
+	/* increase src pointer by 2 skipping 2 chars */
 	src+=2;
       } 
     }
@@ -632,7 +648,7 @@ rrd_fetch_fn_libdbi(
 	(*data)[idx*(*ds_cnt)+1]=r_value; /* AVG */
 	(*data)[idx*(*ds_cnt)+2]=r_value; /* MAX */
 	(*data)[idx*(*ds_cnt)+3]=1;       /* COUNT */
-	(*data)[idx*(*ds_cnt)+4]=r_value*r_value; /* SIGMA */
+       (*data)[idx*(*ds_cnt)+4]=r_value*r_value; /* SIGMA */
       } else {
 	/* MIN */
 	if ((*data)[idx*(*ds_cnt)+0]>r_value) { (*data)[idx*(*ds_cnt)+0]=r_value; }
@@ -647,7 +663,7 @@ rrd_fetch_fn_libdbi(
       }
     }
   }
-  /* and check for negativ status, pass back immediately */
+  /* and check for negative status, pass back immediately */
   if (r_status==-1) { return -1; }
 
   /* post processing */
@@ -666,6 +682,30 @@ rrd_fetch_fn_libdbi(
       (*data)[idx*(*ds_cnt)+4]=r_value;
       /* now the average */
       (*data)[idx*(*ds_cnt)+1]/=count;
+    }
+  }
+
+  /* Fill in missing values */
+  fillmissing/=(*step);/* Convert from seconds to steps */
+  if (fillmissing>0) {
+    int copy_left=fillmissing;
+    for(idx=1;idx<rows;idx++) {
+      long count=(*data)[idx*(*ds_cnt)+3];
+      if (count==0) {
+        /* No data this bin */
+        if (copy_left>0) {
+          /* But we can copy from previous */
+          int idx_p=idx-1;
+          (*data)[idx*(*ds_cnt)+0]=(*data)[idx_p*(*ds_cnt)+0];
+          (*data)[idx*(*ds_cnt)+1]=(*data)[idx_p*(*ds_cnt)+1];
+          (*data)[idx*(*ds_cnt)+2]=(*data)[idx_p*(*ds_cnt)+2];
+          (*data)[idx*(*ds_cnt)+3]=(*data)[idx_p*(*ds_cnt)+3];
+          (*data)[idx*(*ds_cnt)+4]=(*data)[idx_p*(*ds_cnt)+4];
+          copy_left--;
+        }
+      }else{
+        copy_left=fillmissing;
+      }
     }
   }
 

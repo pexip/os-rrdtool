@@ -1,5 +1,5 @@
 /*****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  *****************************************************************************
  * rrd_info  Get Information about the configuration of an RRD
  *****************************************************************************/
@@ -14,7 +14,7 @@ rrd_info_t *rrd_info(
     int,
     char **);
 rrd_info_t *rrd_info_r(
-    char *filename);
+    const char *filename);
 
 /* allocate memory for string */
 char     *sprintf_alloc(
@@ -71,8 +71,7 @@ rrd_info_t
         next->value.u_int = value.u_int;
         break;
     case RD_I_STR:
-        next->value.u_str = (char*)malloc(sizeof(char) * (strlen(value.u_str) + 1));
-        strcpy(next->value.u_str, value.u_str);
+        next->value.u_str = strdup(value.u_str);
         break;
     case RD_I_BLO:
         next->value.u_blo.size = value.u_blo.size;
@@ -89,63 +88,65 @@ rrd_info_t *rrd_info(
     int argc,
     char **argv)
 {
+    struct optparse_long longopts[] = {
+        {"daemon", 'd', OPTPARSE_REQUIRED},
+        {"noflush", 'F', OPTPARSE_NONE},
+        {0},
+    };
+    struct    optparse options;
+    int       opt;
     rrd_info_t *info;
     char *opt_daemon = NULL;
     int status;
+    int flushfirst = 1;
 
-    optind = 0;
-    opterr = 0;         /* initialize getopt */
-
-    while (42) {
-        int       opt;
-        int       option_index = 0;
-        static struct option long_options[] = {
-            {"daemon", required_argument, 0, 'd'},
-            {0, 0, 0, 0}
-        };
-
-        opt = getopt_long(argc, argv, "d:", long_options, &option_index);
-
-        if (opt == EOF)
-            break;
-
+    optparse_init(&options, argc, argv);
+    while ((opt = optparse_long(&options, longopts, NULL)) != -1) {
         switch (opt) {
         case 'd':
             if (opt_daemon != NULL)
-                    free (opt_daemon);
-            opt_daemon = strdup (optarg);
+                free (opt_daemon);
+            opt_daemon = strdup(options.optarg);
             if (opt_daemon == NULL)
             {
                 rrd_set_error ("strdup failed.");
-                return (NULL);
+                return NULL;
             }
             break;
 
-        default:
-            rrd_set_error ("Usage: rrdtool %s [--daemon <addr>] <file>",
-                    argv[0]);
-            return (NULL);
+        case 'F':
+            flushfirst = 0;
             break;
-        }
-    }                   /* while (42) */
 
-    if ((argc - optind) != 1) {
-        rrd_set_error ("Usage: rrdtool %s [--daemon <addr>] <file>",
-                argv[0]);
-        return (NULL);
+        case '?':
+            rrd_set_error("%s", options.errmsg);
+            return NULL;
+        }
+    } /* while (opt != -1) */
+
+    if (options.argc - options.optind != 1) {
+        rrd_set_error ("Usage: rrdtool %s [--daemon |-d <addr> [--noflush|-F]] <file>",
+                options.argv[0]);
+        return NULL;
     }
 
-    status = rrdc_flush_if_daemon(opt_daemon, argv[optind]);
-    if (opt_daemon) free (opt_daemon);
-    if (status) return (NULL);
+    if (flushfirst) {
+        status = rrdc_flush_if_daemon(opt_daemon, options.argv[options.optind]);
+        if (status) return (NULL);
+    }
 
-    info = rrd_info_r(argv[optind]);
+    rrdc_connect (opt_daemon);
+    if (rrdc_is_connected (opt_daemon))
+        info = rrdc_info(options.argv[options.optind]);
+    else
+        info = rrd_info_r(options.argv[options.optind]);
 
+    if (opt_daemon) free(opt_daemon);
     return (info);
 } /* rrd_info_t *rrd_info */
 
 rrd_info_t *rrd_info_r(
-    char *filename)
+    const char *filename)
 {
     unsigned int i, ii = 0;
     rrd_t     rrd;

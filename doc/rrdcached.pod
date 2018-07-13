@@ -7,18 +7,25 @@ rrdcached - Data caching daemon for rrdtool
 =head1 SYNOPSIS
 
 B<rrdcached>
-[B<-P>E<nbsp>I<permissions>]
+[B<-a>E<nbsp>I<alloc_size>]
+[B<-b>E<nbsp>I<base_dir>E<nbsp>[B<-B>]]
+[B<-F>]
+[B<-f>E<nbsp>I<timeout>]
+[B<-G>E<nbsp>I<group>]]
+[B<-g>]
+[B<-j>E<nbsp>I<journal_dir>]
+[B<-L>]
 [B<-l>E<nbsp>I<address>]
+[B<-m>E<nbsp>I<mode>]
+[B<-O>]
+[B<-P>E<nbsp>I<permissions>]
+[B<-p>E<nbsp>I<pid_file>]
+[B<-R>]
 [B<-s>E<nbsp>I<group>]
+[B<-t>E<nbsp>I<write_threads>]
+[B<-U>E<nbsp>I<user>]]
 [B<-w>E<nbsp>I<timeout>]
 [B<-z>E<nbsp>I<delay>]
-[B<-f>E<nbsp>I<timeout>]
-[B<-p>E<nbsp>I<pid_file>]
-[B<-t>E<nbsp>I<write_threads>]
-[B<-j>E<nbsp>I<journal_dir>]
-[-F]
-[-g]
-[B<-b>E<nbsp>I<base_dir>E<nbsp>[B<-B>]]
 
 =head1 DESCRIPTION
 
@@ -41,7 +48,7 @@ section below.
 
 =item B<-l> I<address>
 
-Tells the daemon to bind to I<address> and accept incoming connections on that
+Tells the daemon to bind to I<address> and accept incoming TCP connections on that
 socket. If I<address> begins with C<unix:>, everything following that prefix is
 interpreted as the path to a UNIX domain socket. Otherwise the address or node
 name are resolved using C<getaddrinfo()>.
@@ -50,7 +57,7 @@ For network sockets, a port may be specified by using the form
 C<B<[>I<address>B<]:>I<port>>. If the address is an IPv4 address or a fully
 qualified domain name (i.E<nbsp>e. the address contains at least one dot
 (C<.>)), the square brackets can be omitted, resulting in the (simpler)
-C<I<address>B<:>I<port>> pattern. The default port is B<42217/tcp>. If you
+C<I<address>B<:>I<port>> pattern. The default port is B<42217>. If you
 specify a network socket, it is mandatory to read the
 L</"SECURITY CONSIDERATIONS"> section.
 
@@ -63,14 +70,25 @@ domain socket B<must> start with a slash in the second case!
    [<hostname-or-ip>]:<port>
    <hostname-or-ipv4>:<port>
 
-If the B<-l> option is not specified the default address,
+Given a port without a host (e.g. C<-l :42217>) the daemon will listen
+on that port on all network interfaces.  Use C<-L> to avoid the need
+to explicitly provide the port if the default port is desired.
+
+If no B<-l> option is not specified the default address,
 C<unix:/tmp/rrdcached.sock>, will be used.
+Multiple B<-l> options may be provided.
+
+=item B<-L>
+
+Tells the daemon to bind to the default TCP port on all available
+interfaces.  It is equivalent to C<-l ''> without the confusion of the
+empty string parameter.
 
 =item B<-s> I<group_name>|I<gid>
 
 Set the group permissions of a UNIX domain socket. The option accepts either
 a numeric group id or group name. That group will then have both read and write
-permissions (the socket will have file permissions 0750) for the socket and,
+permissions (the socket will have file permissions 0760) for the socket and,
 therefore, is able to send commands to the daemon. This
 may be useful in cases where you cannot easily run all RRD processes with the same
 user privileges (e.g. graph generating CGI scripts that typically run in the
@@ -105,7 +123,7 @@ use the system default.
 
 =item B<-P> I<command>[,I<command>[,...]]
 
-Specifies the commands accepted via a network socket. This allows
+Specifies the commands accepted via both a network and a UNIX socket. This allows
 administrators of I<RRDCacheD> to control the actions accepted from various
 sources.
 
@@ -141,7 +159,10 @@ Please also read L</"SECURITY CONSIDERATIONS"> below.
 
 =item B<-w> I<timeout>
 
-Data is written to disk every I<timeout> seconds. If this option is not
+Data is written to disk every I<timeout> seconds.
+An L<optional suffix|librrd/rrd_scaled_duration> may be used
+(e.g. C<5m> instead of C<300> seconds).
+If this option is not
 specified the default interval of 300E<nbsp>seconds will be used.
 
 =item B<-z> I<delay>
@@ -149,19 +170,25 @@ specified the default interval of 300E<nbsp>seconds will be used.
 If specified, rrdcached will delay writing of each RRD for a random number
 of seconds in the rangeE<nbsp>[0,I<delay>).  This will avoid too many
 writes being queued simultaneously.  This value should be no greater than
-the value specified in B<-w>.  By default, there is no delay.
+the value specified in B<-w>.
+An L<optional suffix|librrd/rrd_scaled_duration> may be used
+(e.g. C<3m> instead of C<180> seconds).
+By default, there is no delay.
 
 =item B<-f> I<timeout>
 
 Every I<timeout> seconds the entire cache is searched for old values which are
 written to disk. This only concerns files to which updates have stopped, so
 setting this to a high value, such as 3600E<nbsp>seconds, is acceptable in most
-cases. This timeout defaults to 3600E<nbsp>seconds.
+cases.
+An L<optional suffix|librrd/rrd_scaled_duration> may be used
+(e.g. C<1h> instead of C<3600> seconds).
+This timeout defaults to 3600E<nbsp>seconds.
 
 =item B<-p> I<file>
 
 Sets the name and location of the PID-file. If not specified, the default,
-C<I<$localststedir>/run/rrdcached.pid> will be used.
+C<I<$localstatedir>/run/rrdcached.pid> will be used.
 
 =item B<-t> I<write_threads>
 
@@ -236,6 +263,38 @@ Only permit writes into the base directory specified in B<-b> (and any
 sub-directories).  This does B<NOT> detect symbolic links.  Paths
 containing C<../> will also be blocked.
 
+=item B<-R>
+
+Permit recursive subdirectory creation in the base directory specified in B<-b>
+(and any sub-directories). Can only be used when B<-B> is also set.
+
+=item B<-a> I<alloc_size>
+
+Allocate value pointers in chunks of I<alloc_size>.  This may improve CPU
+utilization on machines with slow C<realloc()> implementations, in
+exchange for slightly higher memory utilization.  The default isE<nbsp>1.
+Do not set this more than the B<-w> value divided by your average RRD step
+size.
+
+=item B<-O>
+
+Prevent the CREATE command from overwriting existing files, even when it is
+instructed to do so.  This is for added security.
+
+=item B<-G> -I<group>
+
+When running as daemon and invoked from a privileged account, reset
+group privileges to those of I<group>.  The group may be specified as
+a name or as a group ID.  The daemon will exit with a diagnostic if
+it cannot successfully transition to the specified group.
+
+=item B<-U> -I<user>
+
+When running as daemon and invoked from a privileged account, reset
+user privileges to those of I<user>.  The user may be specified as
+a name or as a user ID.  The daemon will exit with a diagnostic if
+it cannot successfully transition to the specified user.
+
 =back
 
 =head1 AFFECTED RRDTOOL COMMANDS
@@ -271,6 +330,10 @@ info
 
 =item *
 
+first
+
+=item *
+
 last
 
 =item *
@@ -284,6 +347,10 @@ update
 =item *
 
 xport
+
+=item *
+
+create
 
 =back
 
@@ -379,7 +446,7 @@ Tree nodes and entries in the update queue are the same data structure.
 
 =item *
 
-The local time ("First") and the time specified in updates ("Time") may differ.  
+The local time ("First") and the time specified in updates ("Time") may differ.
 
 =item *
 
@@ -399,13 +466,13 @@ ASCII art rocks.
 
 =head2 Authentication
 
-If your rrdtool installation was built without libwrap there is no form of 
+If your rrdtool installation was built without libwrap there is no form of
 authentication for clients connecting to the rrdcache daemon!
 
 If your rrdtool installation was built with libwrap then you can use
 hosts_access to restrict client access to the rrdcache daemon (rrdcached).  For more
 information on how to use hosts_access to restrict access to the rrdcache
-daemon you should read the hosts_access(5) man pages. 
+daemon you should read the hosts_access(5) man pages.
 
 It is still highly recommended to install a packet filter or similar mechanism to
 prevent unauthorized connections. Unless you have a dedicated VLAN or VPN for
@@ -424,6 +491,8 @@ If the networking sockets are to be used, it is necessary to restrict the
 accepted commands to those needed by external clients. If, for example,
 external clients want to draw graphs of the cached data, they should only be
 allowed to use the C<FLUSH> command.
+
+Authorization does not work when rrcached is socket-activated by systemd.
 
 =head2 Encryption
 
@@ -517,6 +586,23 @@ returns immediately, even though the writes may take a long time.
 Shows any "pending" updates for a file, in order.  The updates shown have
 not yet been written to the underlying RRD file.
 
+=item B<FETCH> I<filename> I<CF> [I<start> [I<end>] [I<ds> ...]]
+
+Calls C<rrd_fetch> with the specified arguments and returns the result in text
+form. If necessary, the file is flushed to disk first. The client side function
+C<rrdc_fetch> (declared in C<rrd_client.h>) parses the output and behaves just
+like C<rrd_fetch_r> for easy integration of remote queries.
+ds defines the columns to dump - if none are given then all are returned
+
+=item B<FETCHBIN> I<filename> I<CF> [I<start> [I<end>] [I<ds> ...]]
+
+Calls C<rrd_fetch> with the specified arguments and returns the result in
+text/binary form to avoid unnecessary un/marshalling overhead.
+If necessary, the file is flushed to disk first. The client side function
+C<rrdc_fetch> (declared in C<rrd_client.h>) parses the output and behaves just
+like C<rrd_fetch_r> for easy integration of remote queries.
+ds defines the columns to dump - if none are given then all are returned
+
 =item B<FORGET> I<filename>
 
 Removes I<filename> from the cache.  Any pending updates B<WILL BE LOST>.
@@ -560,6 +646,14 @@ Example:
  JournalBytes: 190
  JournalRotate: 0
 
+=item B<PING>
+
+PING-PONG, this is very useful when using connection pool between user client and RRDCACHED.
+
+Example:
+
+ 0 PONG
+
 =item B<UPDATE> I<filename> I<values> [I<values> ...]
 
 Adds more data to a filename. This is B<the> operation the daemon was designed
@@ -576,6 +670,34 @@ This command is written to the journal after a file is successfully
 written out to disk.  It is used during journal replay to determine which
 updates have already been applied.  It is I<only> valid in the journal; it
 is not accepted from the other command channels.
+
+=item B<FIRST> I<filename> [I<rranum>]
+
+Return the timestamp for the first CDP in the specified RRA.  Default is to
+use RRA zero if none is specified.
+
+=item B<LAST> I<filename>
+
+Return the timestamp for the last update to the specified RRD. Note that the
+cache is I<not> flushed before checking, as the client is expected to request
+this separately if it is required.
+
+=item B<INFO> I<filename>
+
+Return the configuration information for the specified RRD. Note that the
+cache is I<not> flushed before checking, as the client is expected to request
+this separately if it is required.
+
+The information is returned, one item per line, with the format:
+
+ I<keyname> I<type> I<value>
+
+=item B<CREATE> I<filename> [-s I<stepsize>] [-b I<begintime>] [-O] I<DSdefinitions> ... I<RRAdefinitions> ...
+
+This will create the RRD file according to the supplied parameters, provided
+the parameters are valid, and (if the -O option is given or if the rrdcached
+was started with the -O flag) the specified I<filename> does not already
+exist.
 
 =item B<BATCH>
 
@@ -698,6 +820,8 @@ Both B<rrdcached> and this manual page have been written by Florian.
 =head1 CONTRIBUTORS
 
 kevin brintnall E<lt>kbrint@rufus.netE<gt>
+Steve Shipway E<lt>steve@steveshipway.orgE<gt>
+Martin Sperl E<lt>rrdtool@martin.sperl.orgE<gt>
 
 =cut
 

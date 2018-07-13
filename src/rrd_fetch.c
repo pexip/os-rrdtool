@@ -1,5 +1,5 @@
 /*****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  *****************************************************************************
  * rrd_fetch.c  read date from an rrd to use for further processing
  *****************************************************************************
@@ -56,7 +56,8 @@
 #include "rrd_client.h"
 
 #include "rrd_is_thread_safe.h"
-/* #define DEBUG */
+
+/* #define DEBUG  */
 
 int rrd_fetch(
     int argc,
@@ -70,69 +71,69 @@ int rrd_fetch(
     char ***ds_namv,    /* names of data sources */
     rrd_value_t **data)
 {                       /* two dimensional array containing the data */
-    long      step_tmp = 1;
+    unsigned long step_tmp = 1;
     time_t    start_tmp = 0, end_tmp = 0;
     const char *cf;
     char *opt_daemon = NULL;
+    int align_start = 0;
     int status;
 
     rrd_time_value_t start_tv, end_tv;
-    char     *parsetime_error = NULL;
-    struct option long_options[] = {
-        {"resolution", required_argument, 0, 'r'},
-        {"start", required_argument, 0, 's'},
-        {"end", required_argument, 0, 'e'},
-        {"daemon", required_argument, 0, 'd'},
-        {0, 0, 0, 0}
+    const char *parsetime_error = NULL;
+    struct optparse_long longopts[] = {
+        {"resolution", 'r', OPTPARSE_REQUIRED},
+        {"start", 's', OPTPARSE_REQUIRED},
+        {"end", 'e', OPTPARSE_REQUIRED},
+        {"align-start", 'a', OPTPARSE_NONE},
+        {"daemon", 'd', OPTPARSE_REQUIRED},
+        {0},
     };
-
-    optind = 0;
-    opterr = 0;         /* initialize getopt */
+    struct optparse options;
+    int opt;
 
     /* init start and end time */
     rrd_parsetime("end-24h", &start_tv);
     rrd_parsetime("now", &end_tv);
 
-    while (1) {
-        int       option_index = 0;
-        int       opt;
-
-        opt = getopt_long(argc, argv, "r:s:e:d:", long_options, &option_index);
-
-        if (opt == EOF)
-            break;
-
+    optparse_init(&options, argc, argv);
+    while ((opt = optparse_long(&options, longopts, NULL)) != -1) {
         switch (opt) {
         case 's':
-            if ((parsetime_error = rrd_parsetime(optarg, &start_tv))) {
+            if ((parsetime_error = rrd_parsetime(options.optarg, &start_tv))) {
                 rrd_set_error("start time: %s", parsetime_error);
                 return -1;
             }
             break;
         case 'e':
-            if ((parsetime_error = rrd_parsetime(optarg, &end_tv))) {
+            if ((parsetime_error = rrd_parsetime(options.optarg, &end_tv))) {
                 rrd_set_error("end time: %s", parsetime_error);
                 return -1;
             }
             break;
+        case 'a':
+            align_start = 1;
+            break;
         case 'r':
-            step_tmp = atol(optarg);
+            if ((parsetime_error = rrd_scaled_duration(options.optarg, 1, &step_tmp))) {
+                rrd_set_error("resolution: %s", parsetime_error);
+                return -1;
+            }
             break;
 
         case 'd':
             if (opt_daemon != NULL)
-                    free (opt_daemon);
-            opt_daemon = strdup (optarg);
+                free (opt_daemon);
+            opt_daemon = strdup(options.optarg);
             if (opt_daemon == NULL)
             {
                 rrd_set_error ("strdup failed.");
-                return (-1);
+                return -1;
             }
             break;
 
         case '?':
-            rrd_set_error("unknown option '-%c'", optopt);
-            return (-1);
+            rrd_set_error("%s", options.errmsg);
+            return -1;
         }
     }
 
@@ -141,10 +142,15 @@ int rrd_fetch(
         return -1;
     }
 
-
     if (start_tmp < 3600 * 24 * 365 * 10) {
         rrd_set_error("the first entry to fetch should be after 1980");
         return (-1);
+    }
+
+    if (align_start) {
+        time_t delta = (start_tmp % step_tmp);
+        start_tmp -= delta;
+        end_tmp -= delta;
     }
 
     if (end_tmp < start_tmp) {
@@ -155,26 +161,24 @@ int rrd_fetch(
 
     *start = start_tmp;
     *end = end_tmp;
-
-    if (step_tmp < 1) {
-        rrd_set_error("step must be >= 1 second");
-        return -1;
-    }
     *step = step_tmp;
 
-    if (optind + 1 >= argc) {
-        rrd_set_error("Usage: rrdtool %s <file> <CF> [options]", argv[0]);
+    if (options.optind + 1 >= options.argc) {
+        rrd_set_error("Usage: rrdtool %s <file> <CF> [options]", options.argv[0]);
         return -1;
     }
 
-    status = rrdc_flush_if_daemon(opt_daemon, argv[optind]);
-    if (opt_daemon) free (opt_daemon);
-    if (status) return (-1);
+    cf = options.argv[options.optind + 1];
 
-    cf = argv[optind + 1];
+    rrdc_connect (opt_daemon);
+    if (rrdc_is_connected (opt_daemon))
+	    status = rrdc_fetch (options.argv[options.optind],
+			    cf, start, end, step, ds_cnt, ds_namv, data);
 
-    status = rrd_fetch_r(argv[optind], cf, start, end, step,
-            ds_cnt, ds_namv, data);
+    else
+	    status = rrd_fetch_r(options.argv[options.optind],
+			    cf, start, end, step, ds_cnt, ds_namv, data);
+
     if (status != 0)
         return (-1);
     return (0);
@@ -201,6 +205,46 @@ int rrd_fetch_r(
     return (rrd_fetch_fn
             (filename, cf_idx, start, end, step, ds_cnt, ds_namv, data));
 } /* int rrd_fetch_r */
+
+int rrd_fetch_empty(
+    time_t *start,
+    time_t *end,        /* which time frame do you want ? */
+    unsigned long *step,    /* which stepsize do you want? */
+    unsigned long *ds_cnt,  /* number of data sources in file */
+    char *ds_nam,           /* wanted data source */
+    char ***ds_namv,    /* names of data_sources */
+    rrd_value_t **data)
+{
+    unsigned long rows;
+
+    if (((*ds_namv) =
+         (char **) malloc(sizeof(char *))) == NULL) {
+        rrd_set_error("malloc fetch ds_namv array");
+        return (-1);
+    }
+    if ((((*ds_namv)[0]) = (char*)strdup(ds_nam)) == NULL) {
+        rrd_set_error("malloc fetch ds_namv entry");
+        free(*ds_namv);
+        return (-1);
+    }
+
+    *ds_cnt = 1;
+    if (*step == 0) *step = (*end - *start) / 100;
+    *start -= (*start % *step);
+    *end += (*step - *end % *step);
+    rows = (*end - *start) / *step + 1;
+
+    if (((*data) = (rrd_value_t*)malloc(rows * sizeof(rrd_value_t))) == NULL) {
+        rrd_set_error("malloc fetch data area");
+        free((*ds_namv)[0]);
+        free(*ds_namv);
+        return (-1);
+    }
+
+    while (--rows)
+        (*data)[rows-1] = DNAN;
+    return (0);
+}
 
 int rrd_fetch_fn(
     const char *filename,   /* name of the rrd */
@@ -237,10 +281,13 @@ int rrd_fetch_fn(
 
 #ifdef HAVE_LIBDBI
     /* handle libdbi datasources */
-    if (strncmp("sql//",filename,5)==0) {
+    if (strncmp("sql//",filename,5)==0 || strncmp("sql||",filename,5)==0) {
 	return rrd_fetch_fn_libdbi(filename,cf_idx,start,end,step,ds_cnt,ds_namv,data);
     }
 #endif
+    if (strncmp("cb//",filename,4)==0) {
+	return rrd_fetch_fn_cb(filename,cf_idx,start,end,step,ds_cnt,ds_namv,data);
+    }
 
     rrd_init(&rrd);
     rrd_file = rrd_open(filename, &rrd, RRD_READONLY);
@@ -267,7 +314,34 @@ int rrd_fetch_fn(
 
     /* find the rra which best matches the requirements */
     for (i = 0; (unsigned) i < rrd.stat_head->rra_cnt; i++) {
-        if (cf_conv(rrd.rra_def[i].cf_nam) == cf_idx) {
+      enum cf_en rratype=cf_conv(rrd.rra_def[i].cf_nam);
+      /* handle this RRA */
+      if (
+	  /* if we found a direct match */
+	  (rratype == cf_idx)
+	  || 
+	  /*if we found a DS with interval 1 
+	    and CF (requested,available) are MIN,MAX,AVERAGE,LAST
+	  */
+	  ( 
+	      /* only if we are on interval 1 */
+	      (rrd.rra_def[i].pdp_cnt==1) 
+	      && ( 
+		  /* and requested CF is MIN,MAX,AVERAGE,LAST */
+		  (cf_idx == CF_MINIMUM)
+		  ||(cf_idx == CF_MAXIMUM)
+		  ||(cf_idx == CF_AVERAGE)
+		  ||(cf_idx == CF_LAST)
+		  )
+	      && (
+		  /* and found CF is MIN,MAX,AVERAGE,LAST */
+		  (rratype == CF_MINIMUM)
+		  ||(rratype == CF_MAXIMUM)
+		  ||(rratype == CF_AVERAGE)
+		  ||(rratype == CF_LAST)
+		  )
+	      )
+	  ){
 
             cal_end = (rrd.live_head->last_up - (rrd.live_head->last_up
                                                  % (rrd.rra_def[i].pdp_cnt
@@ -374,12 +448,12 @@ int rrd_fetch_fn(
     rra_start_time = (rra_end_time
                       - (*step * (rrd.rra_def[chosen_rra].row_cnt - 1)));
     /* here's an error by one if we don't be careful */
-    start_offset = ((long long) *start + (long long)*step - (long long)rra_start_time) / (long long) *step;
-    end_offset = ((long long) rra_end_time - (long long)*end) / (long long) *step;
+    start_offset = ((long long)*start + (long long)*step - (long long)rra_start_time) / (long long) *step;
+    end_offset = ((long long)rra_end_time - (long long)*end) / (long long) *step;
 #ifdef DEBUG
     fprintf(stderr,
-            "rra_start %lu, rra_end %lu, start_off %li, end_off %li\n",
-            rra_start_time, rra_end_time, start_offset, end_offset);
+            "start %10lu step %10lu rra_start %lld, rra_end %lld, start_off %lld, end_off %lld\n",
+            *start, *step,(long long)rra_start_time, (long long)rra_end_time, (long long)start_offset, (long long)end_offset);
 #endif
     /* only seek if the start time is before the end time */
     if (*start <= rra_end_time && *end >= rra_start_time - (off_t)*step ){

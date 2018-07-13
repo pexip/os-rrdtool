@@ -1,0 +1,3 @@
+# Per lua policy, packages must start with lua-
+# See file:///usr/share/doc/dh-lua/html/policy.html#sec-runtime
+package-name-doesnt-match-sonames

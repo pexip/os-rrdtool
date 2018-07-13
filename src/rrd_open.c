@@ -1,5 +1,5 @@
 /*****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  *****************************************************************************
  * rrd_open.c  Open an RRD File
  *****************************************************************************
@@ -15,9 +15,14 @@
 #include <sys/stat.h>
 #endif
 
+
 #ifdef HAVE_BROKEN_MS_ASYNC
 #include <sys/types.h>
 #include <utime.h>
+#endif
+
+#ifdef HAVE_LIBRADOS
+#include "rrd_rados.h"
 #endif
 
 #define MEMBLK 8192
@@ -41,14 +46,14 @@
 #define DEBUG 1
 /* do not calculate exact madvise hints but assume 1 page for headers and
  * set DONTNEED for the rest, which is assumed to be data */
-/* Avoid calling madvise on areas that were already hinted. May be benefical if
+/* Avoid calling madvise on areas that were already hinted. May be beneficial if
  * your syscalls are very slow */
 
 #ifdef HAVE_MMAP
 /* the cast to void* is there to avoid this warning seen on ia64 with certain
    versions of gcc: 'cast increases required alignment of target type'
 */
-#define __rrd_read(dst, dst_t, cnt) { \
+#define __rrd_read_mmap(dst, dst_t, cnt) { \
 	size_t wanted = sizeof(dst_t)*(cnt); \
 	if (offset + wanted > rrd_file->file_len) { \
 		rrd_set_error("reached EOF while loading header " #dst); \
@@ -58,7 +63,7 @@
 	offset += wanted; \
     }
 #else
-#define __rrd_read(dst, dst_t, cnt) { \
+#define __rrd_read_seq(dst, dst_t, cnt) { \
 	size_t wanted = sizeof(dst_t)*(cnt); \
         size_t got; \
 	if ((dst = (dst_t*)malloc(wanted)) == NULL) { \
@@ -74,6 +79,44 @@
     }
 #endif
 
+#ifdef HAVE_LIBRADOS
+#define __rrd_read_rados(dst, dst_t, cnt) { \
+	size_t wanted = sizeof(dst_t)*(cnt); \
+        size_t got; \
+	if ((dst = (dst_t*)malloc(wanted)) == NULL) { \
+		rrd_set_error(#dst " malloc"); \
+		goto out_nullify_head; \
+	} \
+        got = rrd_rados_read(rrd_file->rados, dst, wanted, offset); \
+	if (got != wanted) { \
+		rrd_set_error("short read while reading header " #dst); \
+                goto out_nullify_head; \
+	} \
+	offset += got; \
+    }
+#endif
+
+#if defined(HAVE_LIBRADOS) && defined(HAVE_MMAP)
+#define __rrd_read(dst, dst_t, cnt) { \
+    if (rrd_file->rados) \
+      __rrd_read_rados(dst, dst_t, cnt) \
+    else \
+      __rrd_read_mmap(dst, dst_t, cnt) \
+    }
+#elif defined(HAVE_LIBRADOS) && !defined(HAVE_MMAP)
+    if (rrd_file->rados) \
+      __rrd_read_rados(dst, dst_t, cnt) \
+    else \
+      __rrd_read_seq(dst, dst_t, cnt) \
+    }
+#elif defined(HAVE_MMAP)
+#define __rrd_read(dst, dst_t, cnt) \
+    __rrd_read_mmap(dst, dst_t, cnt)
+#else
+#define __rrd_read(dst, dst_t, cnt) \
+    __rrd_read_seq(dst, dst_t, cnt)
+#endif
+
 /* get the address of the start of this page */
 #if defined USE_MADVISE || defined HAVE_POSIX_FADVISE
 #ifndef PAGE_START
@@ -85,9 +128,9 @@
  * positioned to the first cdp in the first rra.
  * In the error path of rrd_open, only rrd_free(&rrd) has to be called
  * before returning an error. Do not call rrd_close upon failure of rrd_open.
- * If creating a new file, the parameter rrd must be initialised with
+ * If creating a new file, the parameter rrd must be initialized with
  * details of the file content.
- * If opening an existing file, then use rrd must be initialised by
+ * If opening an existing file, then use rrd must be initialized by
  * rrd_init(rrd) prior to invoking rrd_open
  */
 
@@ -101,7 +144,6 @@ rrd_file_t *rrd_open(
     int       version;
 
 #ifdef HAVE_MMAP
-    ssize_t   _page_size = sysconf(_SC_PAGESIZE);
     char     *data = MAP_FAILED;
 #endif
     off_t     offset = 0;
@@ -131,7 +173,8 @@ rrd_file_t *rrd_open(
         return NULL;
     }
     memset(rrd_file, 0, sizeof(rrd_file_t));
-
+    rrd_file->rrd = rrd;
+    
     rrd_file->pvt = malloc(sizeof(rrd_simple_file_t));
     if(rrd_file->pvt == NULL) {
         rrd_set_error("allocating rrd_simple_file for '%s'", file_name);
@@ -146,6 +189,19 @@ rrd_file_t *rrd_open(
         /* Both READONLY and READWRITE were given, which is invalid.  */
         rrd_set_error("in read/write request mask");
         exit(-1);
+    }
+#endif
+
+#ifdef HAVE_LIBRADOS
+    if (strncmp("ceph//", file_name, 6) == 0) {
+      rrd_file->rados = rrd_rados_open(file_name + 6);
+      if (rrd_file->rados == NULL)
+          goto out_free;
+
+      if (rdwr & RRD_CREAT)
+          goto out_done;
+
+      goto read_check;
     }
 #endif
 
@@ -199,8 +255,8 @@ rrd_file_t *rrd_open(
 #ifdef HAVE_MMAP
 #ifdef HAVE_BROKEN_MS_ASYNC
     if (rdwr & RRD_READWRITE) {    
-        /* some unices, the files mtime does not get update    
-           on msync MS_ASYNC, in order to help them,     
+        /* some unices, the files mtime does not get updated
+           on memory mapped files, in order to help them,     
            we update the the timestamp at this point.      
            The thing happens pretty 'close' to the open    
            call so the chances of a race should be minimal.    
@@ -222,24 +278,23 @@ rrd_file_t *rrd_open(
     } else {
         rrd_file->file_len = newfile_size;
 #ifdef HAVE_POSIX_FALLOCATE
-        if (posix_fallocate(rrd_simple_file->fd, 0, newfile_size) == -1) {
-            rrd_set_error("posix_fallocate '%s': %s", file_name,
-                          rrd_strerror(errno));
-            goto out_close;
+        if (posix_fallocate(rrd_simple_file->fd, 0, newfile_size) == 0){
+            /* if all  is well we skip the seeking below */            
+            goto no_lseek_necessary;        
         }
-#else
+#endif
         lseek(rrd_simple_file->fd, newfile_size - 1, SEEK_SET);
         if ( write(rrd_simple_file->fd, "\0", 1) == -1){    /* poke */
             rrd_set_error("write '%s': %s", file_name, rrd_strerror(errno));
             goto out_close;
         }
         lseek(rrd_simple_file->fd, 0, SEEK_SET);
-#endif
     }
-#ifdef HAVE_POSIX_FADVISE
+    no_lseek_necessary:
+#if !defined(HAVE_MMAP) && defined(HAVE_POSIX_FADVISE)
     /* In general we need no read-ahead when dealing with rrd_files.
        When we stop reading, it is highly unlikely that we start up again.
-       In this manner we actually save time and diskaccess (and buffer cache).
+       In this manner we actually save time and disk access (and buffer cache).
        Thanks to Dave Plonka for the Idea of using POSIX_FADV_RANDOM here. */
     posix_fadvise(rrd_simple_file->fd, 0, 0, POSIX_FADV_RANDOM);
 #endif
@@ -256,7 +311,7 @@ rrd_file_t *rrd_open(
 
 #ifdef HAVE_MMAP
 #ifndef HAVE_POSIX_FALLOCATE
-	/* force allocating the file on the underlaying filesystem to prevent any
+	/* force allocating the file on the underlying filesystem to prevent any
 	 * future bus error when the filesystem is full and attempting to write
 	 * trough the file mapping. Filling the file using memset on the file
 	 * mapping can also lead some bus error, so we use the old fashioned
@@ -299,6 +354,9 @@ rrd_file_t *rrd_open(
                       rrd_strerror(errno));
         goto out_close;
     }
+    rrd->__mmap_start = data;
+    rrd->__mmap_size  = rrd_file->file_len;
+	    
     rrd_simple_file->file_start = data;
 #endif
     if (rdwr & RRD_CREAT)
@@ -306,15 +364,15 @@ rrd_file_t *rrd_open(
 #ifdef USE_MADVISE
     if (rdwr & RRD_COPY) {
         /* We will read everything in a moment (copying) */
-        madvise(data, rrd_file->file_len, MADV_WILLNEED );
         madvise(data, rrd_file->file_len, MADV_SEQUENTIAL );
     } else {
         /* We do not need to read anything in for the moment */
         madvise(data, rrd_file->file_len, MADV_RANDOM);
-        /* the stat_head will be needed soonish, so hint accordingly */
-        madvise(data, sizeof(stat_head_t), MADV_WILLNEED);
-        madvise(data, sizeof(stat_head_t), MADV_RANDOM);
     }
+#endif
+
+#ifdef HAVE_LIBRADOS
+read_check:
 #endif
 
     __rrd_read(rrd->stat_head, stat_head_t,
@@ -333,24 +391,14 @@ rrd_file_t *rrd_open(
 
     version = atoi(rrd->stat_head->version);
 
-    if (version > atoi(RRD_VERSION)) {
+    if (version > atoi(RRD_VERSION5)) {
         rrd_set_error("can't handle RRD file version %s",
                       rrd->stat_head->version);
         goto out_nullify_head;
     }
-#if defined USE_MADVISE
-    /* the ds_def will be needed soonish, so hint accordingly */
-    madvise(data + PAGE_START(offset),
-            sizeof(ds_def_t) * rrd->stat_head->ds_cnt, MADV_WILLNEED);
-#endif
     __rrd_read(rrd->ds_def, ds_def_t,
                rrd->stat_head->ds_cnt);
 
-#if defined USE_MADVISE
-    /* the rra_def will be needed soonish, so hint accordingly */
-    madvise(data + PAGE_START(offset),
-            sizeof(rra_def_t) * rrd->stat_head->rra_cnt, MADV_WILLNEED);
-#endif
     __rrd_read(rrd->rra_def, rra_def_t,
                rrd->stat_head->rra_cnt);
 
@@ -361,21 +409,12 @@ rrd_file_t *rrd_open(
             rrd_set_error("live_head_t malloc");
             goto out_close;
         }
-#if defined USE_MADVISE
-        /* the live_head will be needed soonish, so hint accordingly */
-        madvise(data + PAGE_START(offset), sizeof(time_t), MADV_WILLNEED);
-#endif
         __rrd_read(rrd->legacy_last_up, time_t,
                    1);
 
         rrd->live_head->last_up = *rrd->legacy_last_up;
         rrd->live_head->last_up_usec = 0;
     } else {
-#if defined USE_MADVISE
-        /* the live_head will be needed soonish, so hint accordingly */
-        madvise(data + PAGE_START(offset),
-                sizeof(live_head_t), MADV_WILLNEED);
-#endif
         __rrd_read(rrd->live_head, live_head_t,
                    1);
     }
@@ -398,14 +437,33 @@ rrd_file_t *rrd_open(
       size_t  correct_len = rrd_file->header_len +
         sizeof(rrd_value_t) * row_cnt * rrd->stat_head->ds_cnt;
 
+#ifdef HAVE_LIBRADOS
+      /* skip length checking for rados file */
+      if (rrd_file->rados) {
+        rrd_file->file_len = correct_len;
+      }
+#endif
+
       if (correct_len > rrd_file->file_len)
       {
         rrd_set_error("'%s' is too small (should be %ld bytes)",
                       file_name, (long long) correct_len);
         goto out_nullify_head;
       }
+      if (rdwr & RRD_READVALUES) {
+	  long d_offset = offset;
+	  
+	  __rrd_read(rrd->rrd_value, rrd_value_t,
+		     row_cnt * rrd->stat_head->ds_cnt);
+
+	  rrd_file->header_len = d_offset;
+	  rrd_file->pos = d_offset;
+      }
+      
     }
 
+    
+    
   out_done:
     return (rrd_file);
   out_nullify_head:
@@ -480,10 +538,17 @@ void mincore_print(
 int rrd_lock(
     rrd_file_t *rrd_file)
 {
+#ifdef DISABLE_FLOCK
+    (void)rrd_file;
+    return 0;
+#else
+#ifdef HAVE_LIBRADOS
+    if (rrd_file->rados)
+      return rrd_rados_lock(rrd_file->rados);
+#endif
     int       rcstat;
     rrd_simple_file_t *rrd_simple_file;
     rrd_simple_file = (rrd_simple_file_t *)rrd_file->pvt;
-
     {
 #if defined(_WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)
         struct _stat st;
@@ -506,6 +571,7 @@ int rrd_lock(
     }
 
     return (rcstat);
+#endif
 }
 
 
@@ -542,15 +608,16 @@ void rrd_dontneed(
                        + rrd->rra_ptr[i].cur_row
                        * rrd->stat_head->ds_cnt * sizeof(rrd_value_t));
         if (active_block > dontneed_start) {
-#ifdef USE_MADVISE
+#ifdef USE_MADVISE 
             madvise(rrd_simple_file->file_start + dontneed_start,
                     active_block - dontneed_start - 1, MADV_DONTNEED);
-#endif
-/* in linux at least only fadvise DONTNEED seems to purge pages from cache */
+#else
 #ifdef HAVE_POSIX_FADVISE
+/* in linux at least only fadvise DONTNEED seems to purge pages from cache */
             posix_fadvise(rrd_simple_file->fd, dontneed_start,
                           active_block - dontneed_start - 1,
                           POSIX_FADV_DONTNEED);
+#endif
 #endif
         }
         dontneed_start = active_block;
@@ -570,11 +637,12 @@ void rrd_dontneed(
 #ifdef USE_MADVISE
 	    madvise(rrd_simple_file->file_start + dontneed_start,
 		    rrd_file->file_len - dontneed_start, MADV_DONTNEED);
-#endif
+#else
 #ifdef HAVE_POSIX_FADVISE
 	    posix_fadvise(rrd_simple_file->fd, dontneed_start,
 			  rrd_file->file_len - dontneed_start,
 			  POSIX_FADV_DONTNEED);
+#endif
 #endif
     }
 
@@ -596,14 +664,17 @@ int rrd_close(
     int       ret;
 
 #ifdef HAVE_MMAP
-    ret = msync(rrd_simple_file->file_start, rrd_file->file_len, MS_ASYNC);
-    if (ret != 0)
-        rrd_set_error("msync rrd_file: %s", rrd_strerror(errno));
     ret = munmap(rrd_simple_file->file_start, rrd_file->file_len);
     if (ret != 0)
         rrd_set_error("munmap rrd_file: %s", rrd_strerror(errno));
 #endif
+#ifdef HAVE_LIBRADOS
+    if (rrd_file->rados)
+        ret = rrd_rados_close(rrd_file->rados);
+    else
+#endif
     ret = close(rrd_simple_file->fd);
+
     if (ret != 0)
         rrd_set_error("closing file: %s", rrd_strerror(errno));
     free(rrd_file->pvt);
@@ -620,6 +691,14 @@ off_t rrd_seek(
     off_t off,
     int whence)
 {
+#ifdef HAVE_LIBRADOS
+  /* no seek for rados */
+  if (rrd_file->rados) {
+    rrd_file->pos = off;
+    return 0;
+  }
+#endif
+
     off_t     ret = 0;
 #ifndef HAVE_MMAP
     rrd_simple_file_t *rrd_simple_file;
@@ -661,6 +740,14 @@ ssize_t rrd_read(
     void *buf,
     size_t count)
 {
+#ifdef HAVE_LIBRADOS
+    if (rrd_file->rados) {
+        ssize_t ret = rrd_rados_read(rrd_file->rados, buf, count, rrd_file->pos);
+        if (ret > 0)
+            rrd_file->pos += ret;
+        return ret;
+    }
+#endif
     rrd_simple_file_t *rrd_simple_file = (rrd_simple_file_t *)rrd_file->pvt;
 #ifdef HAVE_MMAP
     size_t    _cnt = count;
@@ -678,14 +765,14 @@ ssize_t rrd_read(
         return 0;       /* EOF */
     buf = memcpy(buf, rrd_simple_file->file_start + rrd_file->pos, _cnt);
 
-    rrd_file->pos += _cnt;  /* mimmic read() semantics */
+    rrd_file->pos += _cnt;  /* mimic read() semantics */
     return _cnt;
 #else
     ssize_t   ret;
 
     ret = read(rrd_simple_file->fd, buf, count);
     if (ret > 0)
-        rrd_file->pos += ret;   /* mimmic read() semantics */
+        rrd_file->pos += ret;   /* mimic read() semantics */
     return ret;
 #endif
 }
@@ -700,6 +787,14 @@ ssize_t rrd_write(
     const void *buf,
     size_t count)
 {
+#ifdef HAVE_LIBRADOS
+    if (rrd_file->rados) {
+      size_t ret = rrd_rados_write(rrd_file->rados, buf, count, rrd_file->pos);
+      if (ret > 0)
+        rrd_file->pos += count;
+      return ret;
+    }
+#endif
     rrd_simple_file_t *rrd_simple_file = (rrd_simple_file_t *)rrd_file->pvt;
 #ifdef HAVE_MMAP
     size_t old_size = rrd_file->file_len;
@@ -710,12 +805,13 @@ ssize_t rrd_write(
     
     if((rrd_file->pos + count) > old_size)
     {
-        rrd_set_error("attempting to write beyond end of file");
+        rrd_set_error("attempting to write beyond end of file (%ld + %ld > %ld)",rrd_file->pos, count, old_size);
         return -1;
     }
-    memcpy(rrd_simple_file->file_start + rrd_file->pos, buf, count);
+    /* can't use memcpy since the areas overlap when tuning */
+    memmove(rrd_simple_file->file_start + rrd_file->pos, buf, count);
     rrd_file->pos += count;
-    return count;       /* mimmic write() semantics */
+    return count;       /* mimic write() semantics */
 #else
     ssize_t   _sz = write(rrd_simple_file->fd, buf, count);
 
@@ -747,34 +843,53 @@ void rrd_init(
     rrd->pdp_prep = NULL;
     rrd->cdp_prep = NULL;
     rrd->rrd_value = NULL;
+    rrd->__mmap_start = NULL;
+    rrd->__mmap_size = 0;
 }
 
 
-/* free RRD header data.  */
-
-#ifdef HAVE_MMAP
-void rrd_free(
-    rrd_t *rrd)
+/* free RRD data, act correctly, regardless of mmap'ped or malloc'd memory. */
+static void free_rrd_ptr_if_not_mmapped(void *m, const rrd_t *rrd)
 {
-    if (rrd->legacy_last_up) {  /* this gets set for version < 3 only */
-        free(rrd->live_head);
+    if (m == NULL) return;
+    
+    if (rrd == NULL || rrd->__mmap_start == NULL) {
+	free(m);
+	return;
     }
+    
+    /* is this ALWAYS correct on all supported platforms ??? */
+    long ofs = (char*)m - (char*)rrd->__mmap_start;
+    if (ofs < rrd->__mmap_size) {
+	// DO NOT FREE, this memory is mmapped!!
+	return;
+    }
+    
+    free(m);
 }
-#else
+
 void rrd_free(
     rrd_t *rrd)
 {
-    free(rrd->live_head);
-    free(rrd->stat_head);
-    free(rrd->ds_def);
-    free(rrd->rra_def);
-    free(rrd->rra_ptr);
-    free(rrd->pdp_prep);
-    free(rrd->cdp_prep);
-    free(rrd->rrd_value);
+    if (rrd == NULL) return;
+    
+    free_rrd_ptr_if_not_mmapped(rrd->live_head, rrd);
+    rrd->live_head = NULL;
+    free_rrd_ptr_if_not_mmapped(rrd->stat_head, rrd);
+    rrd->stat_head = NULL;
+    free_rrd_ptr_if_not_mmapped(rrd->ds_def, rrd);
+    rrd->ds_def = NULL;
+    free_rrd_ptr_if_not_mmapped(rrd->rra_def, rrd);
+    rrd->rra_def = NULL;
+    free_rrd_ptr_if_not_mmapped(rrd->rra_ptr, rrd);
+    rrd->rra_ptr = NULL;
+    free_rrd_ptr_if_not_mmapped(rrd->pdp_prep, rrd);
+    rrd->pdp_prep = NULL;
+    free_rrd_ptr_if_not_mmapped(rrd->cdp_prep, rrd);
+    rrd->cdp_prep = NULL;
+    free_rrd_ptr_if_not_mmapped(rrd->rrd_value, rrd);
+    rrd->rrd_value = NULL;
 }
-#endif
-
 
 /* routine used by external libraries to free memory allocated by
  * rrd library */

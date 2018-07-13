@@ -34,7 +34,7 @@ While the man pages talk of command line switches you have to set in
 order to make B<RRDtool> work it is important to note that
 B<RRDtool> can be remotely controlled through a set of pipes. This
 saves a considerable amount of startup time when you plan to make
-B<RRDtool> do a lot of things quickly. Check the section on L<Remote_Control>
+B<RRDtool> do a lot of things quickly. Check the section on L<REMOTE CONTROL>
 further down. There is also a number of language bindings
 for RRDtool which allow you to use it directly from Perl, python, Tcl,
 PHP, etc.
@@ -58,6 +58,11 @@ Operationally equivalent to B<update> except for output. Check L<rrdupdate>.
 Create a graph from data stored in one or several RRDs. Apart from
 generating graphs, data can also be extracted to stdout. Check L<rrdgraph>.
 
+=item B<graphv>
+
+Create a graph from data stored in one or several RRDs. Same as graph, but
+metadata are printed before the graph. Check L<rrdgraph>.
+
 =item B<dump>
 
 Dump the contents of an RRD in plain ASCII. In connection with restore
@@ -75,17 +80,26 @@ uses fetch to retrieve its data from an RRD. Check L<rrdfetch>.
 
 =item B<tune>
 
-Alter setup of an RRD. Check L<rrdtune>.
+Alter setup and structure of an RRD. Check L<rrdtune>.
+
+=item B<first>
+
+Find the first update time of an RRD. Check L<rrdfirst>.
 
 =item B<last>
 
 Find the last update time of an RRD. Check L<rrdlast>.
 
+=item B<lastupdate>
+
+Find the last update time of an RRD. It also returns the value stored
+for each datum in the most recent update. Check L<rrdlastupdate>.
+
 =item B<info>
 
 Get information about an RRD. Check L<rrdinfo>.
 
-=item B<rrdresize>
+=item B<resize>
 
 Change the size of individual RRAs. This is dangerous! Check L<rrdresize>.
 
@@ -96,11 +110,6 @@ Export data retrieved from one or several RRDs. Check L<rrdxport>.
 =item B<flushcached>
 
 Flush the values for a specific RRD file from memory. Check L<rrdflushcached>.
-
-=item B<rrdcgi>
-
-This is a standalone tool for producing RRD graphs on the fly. Check
-L<rrdcgi>.
 
 =back
 
@@ -131,7 +140,7 @@ a graph covering the whole year. B<RRDtool> offers a solution to this
 problem through its data consolidation feature. When setting up an
 Round Robin Database (B<RRD>), you can define at which interval this
 consolidation should occur, and what consolidation function (B<CF>)
-(average, minimum, maximum, total, last) should be used to build the
+(average, minimum, maximum, last) should be used to build the
 consolidated values (see rrdcreate). You can define any number of
 different consolidation setups within one B<RRD>. They will all be
 maintained on the fly when new data is loaded into the B<RRD>.
@@ -162,8 +171,7 @@ axis.
 
 Using different consolidation functions (B<CF>) allows you to store
 exactly the type of information that actually interests you: the maximum
-one minute traffic on the LAN, the minimum temperature of your wine cellar,
-the total minutes of down time, etc.
+one minute traffic on the LAN, the minimum temperature of your wine cellar, ... etc.
 
 =item Unknown Data
 
@@ -261,10 +269,10 @@ for input via standard input (STDIN). With this feature you can
 improve performance by attaching B<RRDtool> to another process (MRTG
 is one example) through a set of pipes. Over these pipes B<RRDtool>
 accepts the same arguments as on the command line and some special
-commands like B<quit, cd, mkdir> and B<ls>. For detailed help on the
+commands like B<cd, mkdir, pwd, ls> and B<quit>. For detailed help on the
 server commands type:
 
-   rrdtool help cd|mkdir|pwd|ls|quit
+   rrdtool help cd
 
 When a command is completed, RRDtool will print the string  'C<OK>',
 followed by timing information of the form B<u:>I<usertime>

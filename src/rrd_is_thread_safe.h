@@ -1,5 +1,5 @@
 /*****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  * This file:     Copyright 2003 Peter Stamfest <peter@stamfest.at> 
  *                             & Tobias Oetiker
  * Distributed under the GPL
@@ -9,8 +9,8 @@
  * $Id$
  *************************************************************************** */
 
-#ifndef _RRD_IS_THREAD_SAFE_H
-#define _RRD_IS_THREAD_SAFE_H
+#ifndef RRD_IS_THREAD_SAFE_H_F7EEC7F1E9844C6DB63692B2673768F2
+#define RRD_IS_THREAD_SAFE_H_F7EEC7F1E9844C6DB63692B2673768F2
 
 #ifdef  __cplusplus
 extern    "C" {

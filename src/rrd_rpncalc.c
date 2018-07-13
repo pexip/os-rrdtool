@@ -1,5 +1,5 @@
 /****************************************************************************
- * RRDtool 1.4.8  Copyright by Tobi Oetiker, 1997-2013
+ * RRDtool 1.GIT, Copyright by Tobi Oetiker
  ****************************************************************************
  * rrd_rpncalc.c  RPN calculator functions
  ****************************************************************************/
@@ -7,7 +7,13 @@
 #include <limits.h>
 #include <locale.h>
 #include <stdlib.h>
+#include <time.h>
+#include "rrd_tool.h"
 
+#ifdef HAVE_LANGINFO_H
+#include <langinfo.h>
+#endif
+#include "rrd_strtod.h"
 #include "rrd_tool.h"
 #include "rrd_rpncalc.h"
 // #include "rrd_graph.h"
@@ -46,7 +52,7 @@ short rpn_compact(
             /* rpnp.val is a double, rpnc.val is a short */
             double    temp = floor(rpnp[i].val);
 
-            if (temp < SHRT_MIN || temp > SHRT_MAX) {
+			if (temp < SHRT_MIN || temp > SHRT_MAX || temp != rpnp[i].val) {
                 rrd_set_error
                     ("constants must be integers in the interval (%d, %d)",
                      SHRT_MIN, SHRT_MAX);
@@ -78,6 +84,8 @@ rpnp_t   *rpn_expand(
     }
     for (i = 0; rpnc[i].op != OP_END; ++i) {
         rpnp[i].op = (enum op_en)rpnc[i].op;
+	rpnp[i].extra = NULL;
+	rpnp[i].free_extra = NULL;
         if (rpnp[i].op == OP_NUMBER) {
             rpnp[i].val = (double) rpnc[i].val;
         } else if (rpnp[i].op == OP_VARIABLE || rpnp[i].op == OP_PREV_OTHER) {
@@ -117,7 +125,7 @@ void rpn_compact2str(
 #if defined(_WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)
             _itoa(rpnc[i].val, buffer, 10);
 #else
-            sprintf(buffer, "%d", rpnc[i].val);
+            snprintf(buffer, sizeof buffer, "%d", rpnc[i].val);
 #endif
             add_op(OP_NUMBER, buffer)
         }
@@ -170,21 +178,40 @@ void rpn_compact2str(
             add_op(OP_ISINF, ISINF)
             add_op(OP_NOW, NOW)
             add_op(OP_LTIME, LTIME)
+            add_op(OP_NEWDAY, NEWDAY)
+            add_op(OP_NEWWEEK, NEWWEEK)
+            add_op(OP_NEWMONTH, NEWMONTH)
+            add_op(OP_NEWYEAR, NEWYEAR)
+            add_op(OP_STEPWIDTH, STEPWIDTH)
             add_op(OP_TIME, TIME)
             add_op(OP_ATAN2, ATAN2)
             add_op(OP_ATAN, ATAN)
             add_op(OP_SQRT, SQRT)
             add_op(OP_SORT, SORT)
+            add_op(OP_COUNT, COUNT)
             add_op(OP_REV, REV)
             add_op(OP_TREND, TREND)
             add_op(OP_TRENDNAN, TRENDNAN)
             add_op(OP_PREDICT, PREDICT)
             add_op(OP_PREDICTSIGMA, PREDICTSIGMA)
+            add_op(OP_PREDICTPERC, PREDICTPERC)
             add_op(OP_RAD2DEG, RAD2DEG)
             add_op(OP_DEG2RAD, DEG2RAD)
             add_op(OP_AVG, AVG)
             add_op(OP_ABS, ABS)
             add_op(OP_ADDNAN, ADDNAN)
+            add_op(OP_MINNAN, MINNAN)
+            add_op(OP_MAXNAN, MAXNAN)
+            add_op(OP_MEDIAN, MEDIAN)
+            add_op(OP_PERCENT, PERCENT)
+            add_op(OP_SMAX, SMAX)
+            add_op(OP_SMIN, SMIN)
+            add_op(OP_STDEV, STDEV)
+            add_op(OP_DEPTH, DEPTH)
+            add_op(OP_COPY, COPY)
+            add_op(OP_ROLL, ROLL)
+            add_op(OP_INDEX, INDEX)
+            add_op(OP_POW, POW)
 #undef add_op
     }
     (*str)[offset] = '\0';
@@ -216,16 +243,17 @@ short addop2str(
     return 0;
 }
 
-void parseCDEF_DS(
-    const char *def,
-    rrd_t *rrd,
-    int ds_idx)
+void parseCDEF_DS(const char *def,
+		  ds_def_t *ds_def,
+		  void *key_hash,
+		  long (*lookup) (void *, char *)
+		  )
 {
     rpnp_t   *rpnp = NULL;
     rpn_cdefds_t *rpnc = NULL;
     short     count, i;
 
-    rpnp = rpn_parse((void *) rrd, def, &lookup_DS);
+    rpnp = rpn_parse(key_hash, def, lookup);
     if (rpnp == NULL) {
         rrd_set_error("failed to parse computed data source");
         return;
@@ -238,9 +266,20 @@ void parseCDEF_DS(
         if (rpnp[i].op == OP_TIME || rpnp[i].op == OP_LTIME ||
             rpnp[i].op == OP_PREV || rpnp[i].op == OP_COUNT ||
             rpnp[i].op == OP_TREND || rpnp[i].op == OP_TRENDNAN ||
-            rpnp[i].op == OP_PREDICT || rpnp[i].op ==  OP_PREDICTSIGMA ) {
+            rpnp[i].op == OP_PREDICT || rpnp[i].op ==  OP_PREDICTSIGMA ||
+            rpnp[i].op == OP_PREDICTPERC ||
+            /* these could actually go into COMPUTE with RRD format 06 ... since adding new
+               stuff into COMPUTE requires a fileformat update and that can only happen with the
+               1.6 release */
+            rpnp[i].op == OP_STEPWIDTH ||
+            rpnp[i].op == OP_NEWDAY ||
+            rpnp[i].op == OP_NEWWEEK ||
+            rpnp[i].op == OP_NEWMONTH ||
+            rpnp[i].op == OP_NEWYEAR
+        ) {
+
             rrd_set_error
-                ("operators TIME, LTIME, PREV COUNT TREND TRENDNAN PREDICT PREDICTSIGMA are not supported with DS COMPUTE");
+                ("operators TIME LTIME STEPWIDTH PREV NEW* COUNT TREND TRENDNAN PREDICT PREDICTSIGMA PREDICTPERC are not supported with DS COMPUTE");
             free(rpnp);
             return;
         }
@@ -250,7 +289,7 @@ void parseCDEF_DS(
         return;
     }
     /* copy the compact rpn representation over the ds_def par array */
-    memcpy((void *) &(rrd->ds_def[ds_idx].par[DS_cdef]),
+    memcpy((void *) &(ds_def->par[DS_cdef]),
            (void *) rpnc, count * sizeof(rpn_cdefds_t));
     free(rpnp);
     free(rpnc);
@@ -297,23 +336,23 @@ rpnp_t   *rpn_parse(
     long      steps = -1;
     rpnp_t   *rpnp;
     char      vname[MAX_VNAME_LEN + 10];
-    char     *old_locale;
-
-    old_locale = setlocale(LC_NUMERIC, NULL);
-    setlocale(LC_NUMERIC, "C");
+    char      double_str[41] = {0};
 
     rpnp = NULL;
     expr = (char *) expr_const;
-
+    if (! *expr){
+        rrd_set_error("can not parse an empty rpn expression");
+        return NULL;
+    }
     while (*expr) {
         if ((rpnp = (rpnp_t *) rrd_realloc(rpnp, (++steps + 2) *
                                            sizeof(rpnp_t))) == NULL) {
-            setlocale(LC_NUMERIC, old_locale);
             return NULL;
         }
 
-        else if ((sscanf(expr, "%lf%n", &rpnp[steps].val, &pos) == 1)
-                 && (expr[pos] == ',')) {
+        else if ((sscanf(expr, "%40[0-9.e+-]%n", double_str, &pos) == 1)
+                 && (expr[pos] == ',')
+                 && ( rrd_strtodbl( double_str, NULL, &(rpnp[steps].val), NULL ) == 2 )) {
             rpnp[steps].op = OP_NUMBER;
             expr += pos;
         }
@@ -353,6 +392,11 @@ rpnp_t   *rpn_parse(
             match_op(OP_EXC, EXC)
             match_op(OP_POP, POP)
             match_op(OP_LTIME, LTIME)
+            match_op(OP_NEWDAY, NEWDAY)
+            match_op(OP_NEWWEEK, NEWWEEK)
+            match_op(OP_NEWMONTH, NEWMONTH)
+            match_op(OP_NEWYEAR, NEWYEAR)
+            match_op(OP_STEPWIDTH, STEPWIDTH)
             match_op(OP_LT, LT)
             match_op(OP_LE, LE)
             match_op(OP_GT, GT)
@@ -383,13 +427,28 @@ rpnp_t   *rpn_parse(
             match_op(OP_TRENDNAN, TRENDNAN)
             match_op(OP_PREDICT, PREDICT)
             match_op(OP_PREDICTSIGMA, PREDICTSIGMA)
+            match_op(OP_PREDICTPERC, PREDICTPERC)
             match_op(OP_RAD2DEG, RAD2DEG)
             match_op(OP_DEG2RAD, DEG2RAD)
             match_op(OP_AVG, AVG)
             match_op(OP_ABS, ABS)
             match_op(OP_ADDNAN, ADDNAN)
+            match_op(OP_MINNAN, MINNAN)
+            match_op(OP_MAXNAN, MAXNAN)
+            match_op(OP_MEDIAN, MEDIAN)
+            match_op(OP_DEPTH, DEPTH)
+            match_op(OP_COPY, COPY)
+            match_op(OP_ROLL, ROLL)
+            match_op(OP_INDEX, INDEX)
+            match_op(OP_SMAX, SMAX)
+            match_op(OP_SMIN, SMIN)
+            match_op(OP_STDEV, STDEV)
+            match_op(OP_PERCENT, PERCENT)
+            match_op(OP_POW, POW)
+
 #undef match_op
             else if ((sscanf(expr, DEF_NAM_FMT "%n", vname, &pos) == 1)
+                     && (expr[pos] == '\0' || expr[pos] == ',')
                      && ((rpnp[steps].ptr = (*lookup) (key_hash, vname)) !=
                          -1)) {
             rpnp[steps].op = OP_VARIABLE;
@@ -397,24 +456,25 @@ rpnp_t   *rpn_parse(
         }
 
         else {
-            rrd_set_error("don't undestand '%s'",expr);
-            setlocale(LC_NUMERIC, old_locale);
+            rrd_set_error("don't understand '%s'",expr);
             free(rpnp);
             return NULL;
         }
+
+	rpnp[steps].extra = NULL;
+	rpnp[steps].free_extra = NULL;
 
         if (*expr == 0)
             break;
         if (*expr == ',')
             expr++;
         else {
-            setlocale(LC_NUMERIC, old_locale);
+            rrd_set_error("garbage in RPN: '%s'", expr);
             free(rpnp);
             return NULL;
         }
     }
     rpnp[steps + 1].op = OP_END;
-    setlocale(LC_NUMERIC, old_locale);
     return rpnp;
 }
 
@@ -423,28 +483,93 @@ void rpnstack_init(
 {
     rpnstack->s = NULL;
     rpnstack->dc_stacksize = 0;
-    rpnstack->dc_stackblock = 100;
+    rpnstack->dc_stackblock = 1000;
 }
 
 void rpnstack_free(
     rpnstack_t *rpnstack)
 {
-    if (rpnstack->s != NULL)
-        free(rpnstack->s);
+    free(rpnstack->s);
     rpnstack->dc_stacksize = 0;
+}
+
+void rpnp_freeextra(rpnp_t* rpnp)
+{
+    int rpi;
+    if (!rpnp)
+      return;
+    /* process each op from the rpn in turn */
+    for (rpi = 0; rpnp[rpi].op != OP_END; rpi++) {
+        if (rpnp[rpi].extra) {
+	    if (rpnp[rpi].free_extra) {
+	        rpnp[rpi].free_extra(rpnp[rpi].extra);
+	    } else {
+	        free(rpnp[rpi].extra);
+	    }
+	    rpnp[rpi].extra = NULL;
+	}
+    }
 }
 
 static int rpn_compare_double(
     const void *x,
     const void *y)
 {
-    double    diff = *((const double *) x) - *((const double *) y);
+    /* First catch NaN values. They are smallest */
+    if (isnan(*(double *) x) && isnan(*(double *) y))
+        return 0;
+    if (isnan(*(double *) x))
+        return -1;
+    if (isnan(*(double *) y))
+        return 1;
+    /* NaN doesn't reach this part so INF and -INF are extremes.
+     * The sign from isinf() is compatible with the sign we return
+     */
+    if (isinf(*(double *) x))
+        return isinf(*(double *) x);
+    if (isinf(*(double *) y))
+        return isinf(*(double *) y);
 
+    double diff = *((const double *) x) - *((const double *) y);
     return (diff < 0) ? -1 : (diff > 0) ? 1 : 0;
 }
 
+static int find_first_weekday(void){
+    static int first_weekday = -1;
+    if (first_weekday == -1){
+#ifdef HAVE__NL_TIME_WEEK_1STDAY
+        /* according to http://sourceware.org/ml/libc-locales/2009-q1/msg00011.html */
+        /* See correct way here http://pasky.or.cz/dev/glibc/first_weekday.c */
+        first_weekday = nl_langinfo (_NL_TIME_FIRST_WEEKDAY)[0];
+        int week_1stday;
+        long week_1stday_l = (long) nl_langinfo (_NL_TIME_WEEK_1STDAY);
+        if (week_1stday_l == 19971130
+#if SIZEOF_LONG_INT > 4
+            || week_1stday_l >> 32 == 19971130
+#endif
+           )
+            week_1stday = 0; /* Sun */
+        else if (week_1stday_l == 19971201
+#if SIZEOF_LONG_INT > 4
+           || week_1stday_l >> 32 == 19971201
+#endif
+           )
+            week_1stday = 1; /* Mon */
+        else
+        {
+            first_weekday = 1;
+            return first_weekday; /* we go for a monday default */
+        }
+        first_weekday=(week_1stday + first_weekday - 1) % 7;
+#else
+        first_weekday = 1;
+#endif
+    }
+    return first_weekday;
+}
+
 /* rpn_calc: run the RPN calculator; also performs variable substitution;
- * moved and modified from data_calc() originally included in rrd_graph.c 
+ * moved and modified from data_calc() originally included in rrd_graph.c
  * arguments:
  * rpnp : an array of RPN operators (including variable references)
  * rpnstack : the initialized stack
@@ -463,11 +588,13 @@ short rpn_calc(
     rpnstack_t *rpnstack,
     long data_idx,
     rrd_value_t *output,
-    int output_idx)
-{
+    int output_idx,
+    int step_width
+){
     int       rpi;
     long      stptr = -1;
-
+    struct tm tmtmp1,tmtmp2;
+    time_t    timetmp;
     /* process each op from the rpn in turn */
     for (rpi = 0; rpnp[rpi].op != OP_END; rpi++) {
         /* allocate or grow the stack */
@@ -501,7 +628,7 @@ short rpn_calc(
             } else {
                 /* make sure we pull the correct value from
                  * the *.data array. Adjust the pointer into
-                 * the array acordingly. Advance the ptr one
+                 * the array accordingly. Advance the ptr one
                  * row in the rra (skip over non-relevant
                  * data sources)
                  */
@@ -520,6 +647,9 @@ short rpn_calc(
                     rpnp[rpi].data += rpnp[rpi].ds_cnt;
                 }
             }
+            break;
+        case OP_STEPWIDTH:
+            rpnstack->s[++stptr] = step_width;
             break;
         case OP_COUNT:
             rpnstack->s[++stptr] = (output_idx + 1);    /* Note: Counter starts at 1 */
@@ -551,6 +681,34 @@ short rpn_calc(
         case OP_LTIME:
             rpnstack->s[++stptr] =
                 (double) tzoffset(data_idx) + (double) data_idx;
+            break;
+        case OP_NEWDAY:
+            timetmp = data_idx;
+            localtime_r(&timetmp,&tmtmp1);
+            timetmp = data_idx-step_width;
+            localtime_r(&timetmp,&tmtmp2);
+            rpnstack->s[++stptr] = tmtmp1.tm_mday != tmtmp2.tm_mday ? 1.0 : 0.0;
+            break;
+        case OP_NEWWEEK:
+            timetmp = data_idx;
+            localtime_r(&timetmp,&tmtmp1);
+            timetmp = data_idx-step_width;
+            localtime_r(&timetmp,&tmtmp2);
+            rpnstack->s[++stptr] = (tmtmp1.tm_wday == find_first_weekday() && tmtmp1.tm_wday != tmtmp2.tm_wday) ? 1.0 : 0.0;
+            break;
+        case OP_NEWMONTH:
+            timetmp = data_idx;
+            localtime_r(&timetmp,&tmtmp1);
+            timetmp = data_idx-step_width;
+            localtime_r(&timetmp,&tmtmp2);
+            rpnstack->s[++stptr] = tmtmp1.tm_mon != tmtmp2.tm_mon? 1.0 : 0.0;
+            break;
+        case OP_NEWYEAR:
+            timetmp = data_idx;
+            localtime_r(&timetmp,&tmtmp1);
+            timetmp = data_idx-step_width;
+            localtime_r(&timetmp,&tmtmp2);
+            rpnstack->s[++stptr] = tmtmp1.tm_year != tmtmp2.tm_year ? 1.0: 0.0;
             break;
         case OP_ADD:
             stackunderflow(1);
@@ -593,6 +751,12 @@ short rpn_calc(
         case OP_MOD:
             stackunderflow(1);
             rpnstack->s[stptr - 1] = fmod(rpnstack->s[stptr - 1]
+                                          , rpnstack->s[stptr]);
+            stptr--;
+            break;
+        case OP_POW:
+            stackunderflow(1);
+            rpnstack->s[stptr - 1] = pow(rpnstack->s[stptr - 1]
                                           , rpnstack->s[stptr]);
             stptr--;
             break;
@@ -721,8 +885,7 @@ short rpn_calc(
             stackunderflow(2);
             rpnstack->s[stptr - 2] = (isnan(rpnstack->s[stptr - 2])
                                       || rpnstack->s[stptr - 2] ==
-                                      0.0) ? rpnstack->s[stptr] : rpnstack->
-                s[stptr - 1];
+                                      0.0) ? rpnstack->s[stptr] : rpnstack->s[stptr - 1];
             stptr--;
             stptr--;
             break;
@@ -735,11 +898,29 @@ short rpn_calc(
                 rpnstack->s[stptr - 1] = rpnstack->s[stptr];
             stptr--;
             break;
+        case OP_MINNAN:
+            stackunderflow(1);
+            if (isnan(rpnstack->s[stptr - 1]))
+                rpnstack->s[stptr - 1] = rpnstack->s[stptr];
+            else if (isnan(rpnstack->s[stptr]));
+            else if (rpnstack->s[stptr - 1] > rpnstack->s[stptr])
+                rpnstack->s[stptr - 1] = rpnstack->s[stptr];
+            stptr--;
+            break;
         case OP_MAX:
             stackunderflow(1);
             if (isnan(rpnstack->s[stptr - 1]));
             else if (isnan(rpnstack->s[stptr]))
                 rpnstack->s[stptr - 1] = rpnstack->s[stptr];
+            else if (rpnstack->s[stptr - 1] < rpnstack->s[stptr])
+                rpnstack->s[stptr - 1] = rpnstack->s[stptr];
+            stptr--;
+            break;
+        case OP_MAXNAN:
+            stackunderflow(1);
+            if (isnan(rpnstack->s[stptr - 1]))
+                rpnstack->s[stptr - 1] = rpnstack->s[stptr];
+            else if (isnan(rpnstack->s[stptr]));
             else if (rpnstack->s[stptr - 1] < rpnstack->s[stptr])
                 rpnstack->s[stptr - 1] = rpnstack->s[stptr];
             stptr--;
@@ -799,12 +980,27 @@ short rpn_calc(
             break;
         case OP_PREDICT:
         case OP_PREDICTSIGMA:
-            stackunderflow(2);
+        case OP_PREDICTPERC:
 	    {
-		/* the local averaging window (similar to trend, but better here, as we get better statistics thru numbers)*/
+	        /* the percentile requested */
+	        double  percentile = DNAN;
+		if (rpnp[rpi].op == OP_PREDICTPERC) {
+		    stackunderflow(1);
+		    percentile = rpnstack->s[--stptr];
+		    if (abs(percentile) > 100) {
+		        rrd_set_error("unsupported percentile: %f",percentile);
+			return -1;
+		    }
+		    percentile/=100;
+		}
+		/* the local averaging window (similar to trend,
+		 * but better here, as we get better statistics
+		 * thru numbers)*/
+	        stackunderflow(2);
 		int   locstepsize = rpnstack->s[--stptr];
 		/* the number of shifts and range-checking*/
 		int     shifts = rpnstack->s[--stptr];
+
                 stackunderflow(shifts);
 		// handle negative shifts special
 		if (shifts<0) {
@@ -815,9 +1011,9 @@ short rpn_calc(
 		/* the real calculation */
 		double val=DNAN;
 		/* the info on the datasource */
-		time_t  dsstep = (time_t) rpnp[rpi - 1].step;
-		int    dscount = rpnp[rpi - 1].ds_cnt;
-		int   locstep = (int)ceil((float)locstepsize/(float)dsstep);
+		time_t  dsstep  = (time_t) rpnp[rpi - 1].step;
+		int     dscount = rpnp[rpi - 1].ds_cnt;
+		int     locstep = (int)ceil((float)locstepsize/(float)dsstep);
 
 		/* the sums */
                 double    sum = 0;
@@ -826,13 +1022,23 @@ short rpn_calc(
 		/* now loop for each position */
 		int doshifts=shifts;
 		if (shifts<0) { doshifts=-shifts; }
+		/* alloc memory */
+		double *extra = (double *) rpnp[rpi].extra;
+		if (rpnp[rpi].op == OP_PREDICTPERC) {
+		    if (! extra) {
+		      int size = (doshifts + 1) * (locstep + 2);
+		      rpnp[rpi].extra =
+			  extra =  (double *) malloc(sizeof(double) * size);
+		    }
+		}
+		/* loop the shifts */
 		for(int loop=0;loop<doshifts;loop++) {
 		    /* calculate shift step */
 		    int shiftstep=1;
 		    if (shifts<0) {
 			shiftstep = loop*rpnstack->s[stptr];
-		    } else { 
-			shiftstep = rpnstack->s[stptr+loop]; 
+		    } else {
+			shiftstep = rpnstack->s[stptr+loop];
 		    }
 		    if(shiftstep <0) {
 			rrd_set_error("negative shift step not allowed: %i",shiftstep);
@@ -841,7 +1047,8 @@ short rpn_calc(
 		    shiftstep=(int)ceil((float)shiftstep/(float)dsstep);
 		    /* loop all local shifts */
 		    for(int i=0;i<=locstep;i++) {
-			/* now calculate offset into data-array - relative to output_idx*/
+			/* now calculate offset into data-array
+			 * - relative to output_idx */
 			int offset=shiftstep+i;
 			/* and process if we have index 0 of above */
 			if ((offset>=0)&&(offset<output_idx)) {
@@ -851,6 +1058,9 @@ short rpn_calc(
 			    if (! isnan(val)) {
 				sum+=val;
 				sum2+=val*val;
+				if (extra) {
+				    extra[count]=val;
+				}
 				count++;
 			    }
 			}
@@ -858,11 +1068,13 @@ short rpn_calc(
 		}
 		/* do the final calculations */
 		val=DNAN;
-		if (rpnp[rpi].op == OP_PREDICT) {  /* the average */
+		switch (rpnp[rpi].op) {
+		case OP_PREDICT:
 		    if (count>0) {
 			val = sum/(double)count;
-		    } 
-		} else {
+		    }
+		    break;
+		case OP_PREDICTSIGMA:
 		    if (count>1) { /* the sigma case */
 			val=count*sum2-sum*sum;
 			if (val<0) {
@@ -871,6 +1083,29 @@ short rpn_calc(
 			    val=sqrt(val/((float)count*((float)count-1.0)));
 			}
 		    }
+		    break;
+		case OP_PREDICTPERC:
+		    if ((count>0) && extra) {
+		        /* sort the numbers */
+		        qsort(extra,count,sizeof(double),rpn_compare_double);
+			/* get the percentile selected */
+			double idxf = percentile * ((float)count-1.0);
+			if (percentile < 0) { /* take the next best */
+			    int idx = round(abs(idxf));
+			    val = extra[idx];
+			} else { /* interpolate */
+			    int idx = floor(idxf);
+			    double deltax = idxf - idx;
+			    val = extra[idx];
+			    if (deltax) { /* this check also handles the percentile=100 case */
+			      double deltay = extra[idx + 1] - extra[idx];
+			      val += deltay * deltax;
+			    }
+			}
+		    }
+		    break;
+		default: /* should not get here ... */
+		    break;
 		}
 		rpnstack->s[stptr] = val;
 	    }
@@ -940,6 +1175,180 @@ short rpn_calc(
             stackunderflow(0);
             rpnstack->s[stptr] = fabs(rpnstack->s[stptr]);
             break;
+        case OP_MEDIAN:
+            stackunderflow(0);
+            {
+                int elements = (int) rpnstack->s[stptr--];
+                int final_elements = elements;
+                double *element_ptr = rpnstack->s + stptr - elements + 1;
+                double *goodvals = element_ptr;
+                double *badvals = element_ptr + elements - 1;
+
+                stackunderflow(elements - 1);
+
+                /* move values to consolidate the non-NANs for sorting, keeping
+                 * track of how many NANs we encounter. */
+                while (goodvals < badvals) {
+                    if (isnan(*goodvals)) {
+                        *goodvals = *badvals--;
+                        --final_elements;
+                    } else {
+                        ++goodvals;
+                    }
+                }
+
+                stptr -= elements;
+                if (!final_elements) {
+                    /* no non-NAN elements; push NAN */
+                    rpnstack->s[++stptr] = DNAN;
+                } else {
+                    /* when goodvals and badvals meet, they might have met on a
+                     * NAN, which wouldn't decrease final_elements. so, check
+                     * that now. */
+                    if (isnan(*goodvals)) --final_elements;
+                    /* and finally, take the median of the remaining non-NAN
+                     * elements. */
+                    qsort(element_ptr, final_elements, sizeof(double),
+                          rpn_compare_double);
+                    if (final_elements % 2 == 1){
+                       rpnstack->s[++stptr] = element_ptr[ final_elements / 2 ];
+                    }
+                    else {
+                       rpnstack->s[++stptr] = 0.5 * ( element_ptr[ final_elements / 2 ] + element_ptr[ final_elements / 2 - 1 ] );
+                    }
+                }
+            }
+            break;
+        case OP_STDEV:
+            stackunderflow(0);
+            {
+                int elements = (int) rpnstack->s[stptr--];
+                stackunderflow(elements-1);
+                int n = 0;
+                rrd_value_t mean = 0;
+                rrd_value_t mean2 = 0;
+                while (elements--){
+                    rrd_value_t datum  = rpnstack->s[stptr--];
+                    rrd_value_t delta;
+                    if (isnan(datum)){
+                        continue;
+                    }
+                    n++;
+                    delta = datum - mean;
+                    mean += delta / n;
+                    mean2 += delta * (datum - mean);
+                }
+                rpnstack->s[++stptr] = n < 2 ? DNAN : sqrt(mean2 / ( n - 1));
+            }
+            break;
+        case OP_PERCENT:
+            stackunderflow(2);
+            {
+                int       elements = (int) rpnstack->s[stptr--];
+                double    percent = rpnstack->s[stptr--];
+                if (! (percent >= 0 && percent <=100)){
+                    rrd_set_error("percentile argument must be between 0 and 100");
+                    return -1;
+                }
+
+                stackunderflow(elements - 1);
+                qsort(rpnstack->s + stptr - elements + 1, elements, sizeof(double),
+                      rpn_compare_double);
+                stptr -= elements;
+                rpnstack->s[stptr+1] = rpnstack->s[stptr+(int)round(percent*(double)(elements)/100.0)];
+                stptr++;
+            }
+            break;
+        case OP_SMAX:
+            stackunderflow(0);
+            {
+                rrd_value_t ximum = DNAN;
+                int elements = (int) rpnstack->s[stptr--];
+                stackunderflow(elements - 1);
+                while(elements--){
+                    rrd_value_t element = rpnstack->s[stptr--];
+                    if (isnan(ximum) || element > ximum) {
+                        ximum = element;
+                    }
+                }
+                rpnstack->s[++stptr] = ximum;
+            }
+            break;
+        case OP_SMIN:
+            stackunderflow(0);
+            {
+                rrd_value_t ximum = DNAN;
+                int elements = (int) rpnstack->s[stptr--];
+                stackunderflow(elements - 1);
+                while(elements--){
+                    rrd_value_t element = rpnstack->s[stptr--];
+                    if (isnan(ximum) || element < ximum) {
+                        ximum = element;
+                    }
+                }
+                rpnstack->s[++stptr] = ximum;
+            }
+            break;
+        case OP_ROLL:
+            stackunderflow(1);
+            {
+                int step = (int) rpnstack->s[stptr--];
+                int base = (int) rpnstack->s[stptr--];
+                int i = base;
+                int j = i + step;
+                double *tmp_stack;
+                stackunderflow(base-1);
+                tmp_stack = (double *)malloc(sizeof(double)*base);
+                if(!tmp_stack) {
+                    rrd_set_error("RPN out of memory (allocating %i objects)",base);
+                    return -1;
+                }
+                memcpy(tmp_stack,rpnstack->s + stptr,(sizeof(double)*base));
+                while(i--) {
+                    j--;
+                    while(j<0) { j += base; }
+                    while(j>=base) { j -= base; }
+                    rpnstack->s[stptr-i] = tmp_stack[j];
+                }
+                free(tmp_stack);
+            }
+            break;
+        case OP_INDEX:
+            stackunderflow(0);
+            {
+                int i = (int) rpnstack->s[stptr];
+                stackunderflow(i);
+                rpnstack->s[stptr] = rpnstack->s[stptr - i];
+            }
+            break;
+        case OP_COPY:
+            {
+                int base = (int) rpnstack->s[stptr--];
+                int i = base;
+                stackunderflow(base - 1);
+                /* allocate or grow the stack */
+                while (stptr + base > rpnstack->dc_stacksize) {
+                    /* could move this to a separate function */
+                    rpnstack->dc_stacksize += rpnstack->dc_stackblock;
+                    rpnstack->s = (double*)rrd_realloc(rpnstack->s,
+                                      (rpnstack->dc_stacksize) *
+                                      sizeof(*(rpnstack->s)));
+                    if (rpnstack->s == NULL) {
+                        rrd_set_error("RPN stack overflow");
+                        return -1;
+                    }
+                }
+                while(i--) {
+                  stptr++;
+                  rpnstack->s[stptr] = rpnstack->s[stptr - base];
+                }
+            }
+            break;
+        case OP_DEPTH:
+            stptr++;
+            rpnstack->s[stptr] = stptr;
+            break;
+
         case OP_END:
             break;
         }

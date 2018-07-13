@@ -1,3 +1,153 @@
+rrdtool (1.6.0-1pexip1) pexip; urgency=medium
+
+  * Migrate to Stretch
+
+ -- Vincent Sanders <vince@pexip.com>  Fri, 13 Jul 2018 15:36:40 +0000
+
+rrdtool (1.6.0-1) unstable; urgency=low
+
+  * New upstream version:
+    - Soname bump to librrd8. Adjusted library package name.
+    - No longer installing librrd_th.so. The whole library is now thread safe.
+    - Python binding: Release the GIL when doing I/O. (Closes: #691765)
+    - Drop patches applied upstream.
+  * d/control: Switched Vcs-Git to a secure uri.
+  * Enabled bindnow hardening.
+  * Bumped policy to 3.9.8: No change required.
+  * Added lintian false positive override for librrds-perl.
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Mon, 25 Apr 2016 09:23:34 +0200
+
+rrdtool (1.5.6-1) unstable; urgency=medium
+ 
+  * New upstream release.
+  * Use upstream version of patch tests_noverbose.
+  * Partial drop of d/patches/reproducible-builds, now built in pod2man.
+ 
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Mon, 25 Apr 2016 09:15:00 +0200
+
+rrdtool (1.5.5-4) unstable; urgency=high
+
+  * Expanded list of files to install. (Closes: #807024)
+  * New patch tests_noverbose to disable verbose in tests. This was polluting
+    the output, make tests fails, and FTBFS. (Closes: #818156)
+  * Bumped policy to 3.9.7: No change required.
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Wed, 23 Mar 2016 11:46:12 +0100
+
+rrdtool (1.5.5-3) unstable; urgency=high
+
+  * Updated d/patch/series file. (Closes: #805391)
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Sun, 20 Dec 2015 13:58:21 +0100
+
+rrdtool (1.5.5-2) unstable; urgency=high
+
+  * New patch/mmap_memcpy_overlap to fix FTBFS on mips. Thanks to
+    Niko Tyni. (Closes: #805391)
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Sun, 20 Dec 2015 10:40:55 +0100
+
+rrdtool (1.5.5-1) unstable; urgency=medium
+
+  * New upstream release:
+   - Drop patches 7digit and pm_noexec: Applied upstream.
+  * Adjusted rrd-lua.lintian-override for lua5.3.
+  * Dropped rrdtool-dbg lintian-overrides, fixed in lintian.
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Mon, 16 Nov 2015 21:55:40 +0100
+
+rrdtool (1.5.4-5) unstable; urgency=medium
+
+  * Removed Multi-Arch:no. (Closes: #795646)
+  * Added support for lua5.3.
+  * Removed rrdcached from hurd since it uses 'Not implemented' functions.
+  * Reduced build and -dev dependencies.
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Mon, 17 Aug 2015 16:08:45 +0200
+
+rrdtool (1.5.4-4) unstable; urgency=medium
+
+  * Allowed dh_install to proceed when python-setuptools is not installed.
+  * Added patch 390x_first_week_day to fix unit tests on 390x architectures.
+  * Enabled Multi-Arch. Partial support due to #117142. Lintian override for
+    python debug symbols (See #795275).
+  * Enabled perl-shared unit tests.
+  * Refreshed lua patches headers: Applied-Upstream.
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Fri, 14 Aug 2015 15:26:41 +0200
+
+rrdtool (1.5.4-3) unstable; urgency=medium
+
+  * Added new patches to support lua5.2. Thanks Yolanda Robla.
+  * Switched building of lua, perl, python and ruby bindings packages to use
+    debhelper specific buildsystems:
+    - Created packages lua-rrd and lua-rrd-dev, providing support for both
+      lua 5.1 and 5.2. The old packages are now transitional. Added
+      dependency on dh_lua.
+    - Adjusted cleaning, installing and testing to these systems.
+  * Force LC_ALL during the build; Re-enabled rpn2 unit test.
+  * Enabled rrdcached unit test.
+  * d/control: Dropped pre-Jessie transitions.
+  * Dropped unused lintian overrides.
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Wed, 12 Aug 2015 17:23:20 +0200
+
+rrdtool (1.5.4-2) unstable; urgency=low
+
+  * Force UTF-8 encoding and UTC timezone on build.
+  * patches/breaks-long-man-lines: Force UTF-8.
+  * New patch 7digits to limit precision in unit test success checks.
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Sun, 09 Aug 2015 22:58:54 +0200
+
+rrdtool (1.5.4-1) unstable; urgency=low
+
+  * Added myself in uploaders.
+  * Update d/watch to look dirrectly at github.
+  * New upstream version:
+    - Fixes json output (Closes: #686825)
+    - Fixes rrdupdate duplicate paragraph in man (Closes: #603507)
+    - Adds support for floating point values with DERIVE, COUNTER with new
+      datasource types: DCOUNTER and DDERIVE. (Closes: #543631)
+    - Fixes compilation on hurd. (Closes: #721975)
+    - Provide a python example with locale setup. (Closes: #729007).
+    - Drop all patches but no-rpath-for-ruby: Applied upstream.
+    - Added build-dependency on dc.
+    - Ignoring new systemd files that would change the socket location and
+      many options. Using upstream lsb files from github. (Closes: #717248,
+      #748656)
+  * Moved project to alioth: Updated maintainer address and Vcs-* fields.
+  * Dropped transitional packages librrd-ruby*.
+  * Bumped standards to 3.9.6: No change required.
+  * Switch copyright to DEP5 format.
+  * Bumped source format to 3.0 (quilt):
+    - Dropped d/README.source;
+    - Dropped quilt has a dependency.
+  * Minimized d/rules:
+    - Using dh_auto_configure fixes all hardening but for ruby.
+    - Uses /usr/lib/arch-triplet.
+    - Clean using d/clean.
+  * Enabled verbose build.
+  * Re-enabled optimisations on arm. (Closes: #467342)
+  * Disable rpn2 unittest that fails.
+  * Made the builds reproducible:
+    - Set up fake BUILD_DATE and BUILD_TIME in d/rules from changelog.
+    - New patch reproducible-builds to use these.
+  * Added patch breaks-long-man-lines to fix "Cant break line" warnings.
+  * Added librrd4.lintian-overrides for false positive.
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Sun, 09 Aug 2015 17:43:02 +0200
+
+rrdtool (1.4.8-1.3) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Fix setlocale calls, causing free'd memory usage. Thanks Matthias Nagel.
+    (Closes: #751842)
+  * Add libpng-dev as an alternative to libpng12-dev. (Closes: #662494)
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Wed, 03 Jun 2015 23:38:18 +0200
+
 rrdtool (1.4.8-1.2pexip1) pexip; urgency=medium
 
   * Prepare Pexip packaging
