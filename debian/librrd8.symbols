@@ -3,6 +3,7 @@ librrd.so.8 librrd8 #MINVER#
  rrd_add_ptr_chunk@Base 1.5.3
  rrd_add_strdup@Base 1.4~rc2
  rrd_add_strdup_chunk@Base 1.5.3
+ rrd_cf_conv@Base 1.7.0
  rrd_clear_error@Base 1.3.0
  rrd_close@Base 1.3.0
  rrd_create@Base 1.3.0
@@ -11,6 +12,7 @@ librrd.so.8 librrd8 #MINVER#
  rrd_dontneed@Base 1.3.0
  rrd_dump@Base 1.3.0
  rrd_dump_cb_r@Base 1.4~rc2+20091004
+ rrd_dump_opt_r@Base 1.7.1
  rrd_dump_r@Base 1.3.0
  rrd_fetch@Base 1.3.0
  rrd_fetch_cb_register@Base 1.5.3
@@ -37,6 +39,9 @@ librrd.so.8 librrd8 #MINVER#
  rrd_last_r@Base 1.3.0
  rrd_lastupdate@Base 1.3.0
  rrd_lastupdate_r@Base 1.4~rc2
+ rrd_lcd@Base 1.7.0
+ rrd_list@Base 1.7.0
+ rrd_list_r@Base 1.7.0
  rrd_lock@Base 1.3.0
  rrd_mkdir_p@Base 1.4~rc2+20091004
  rrd_new_context@Base 1.3.0
@@ -45,6 +50,7 @@ librrd.so.8 librrd8 #MINVER#
  rrd_proc_start_end@Base 1.3.0
  rrd_random@Base 1.4~rc2
  rrd_read@Base 1.3.0
+ rrd_reduce_data@Base 1.7.0
  rrd_resize@Base 1.3.0
  rrd_restore@Base 1.3.0
  rrd_scaled_duration@Base 1.5.3

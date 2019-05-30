@@ -1,4 +1,4 @@
-/* rrd_config.h for Visual Studio 2010, 2012 */
+/* rrd_config.h for Visual Studio 2010, 2012 and newer */
 
 #ifndef RRD_CONFIG_H
 #define RRD_CONFIG_H
@@ -8,10 +8,10 @@
 
 /* Define to the version of this package. */
 #define PACKAGE_MAJOR       1
-#define PACKAGE_MINOR       4
-#define PACKAGE_REVISION    999
-#define PACKAGE_VERSION     "1.4.999"
-#define NUMVERS             1.4999
+#define PACKAGE_MINOR       7
+#define PACKAGE_REVISION    1
+#define PACKAGE_VERSION     "1.7.1"
+#define NUMVERS             1.71
 
 #define RRD_DEFAULT_FONT "Courier"
 
@@ -52,6 +52,9 @@
 #  endif
 #endif
 
+/* Define to 1 if you have the `asprintf' function. */
+#define HAVE_ASPRINTF 1
+
 /* Define to 1 if you have the `chdir' function. */
 #define HAVE_CHDIR 1
 
@@ -64,8 +67,14 @@
 /* Define to 1 if you have the `isnan' function. */
 #define HAVE_ISNAN 1
 
+/* glib has g_regex_new since 2.14 */
+#define HAVE_G_REGEX_NEW 1
+
 /* is rrd_graph supported by this install */
 #define HAVE_RRD_GRAPH /**/
+
+/* is rrd_restore supported by this install */
+#define HAVE_RRD_RESTORE /**/
 
 /* Define to 1 if you have the `snprintf' function. */
 #define HAVE_SNPRINTF 1
@@ -91,14 +100,16 @@
 /* Define to 1 if you have the `tzset' function. */
 #define HAVE_TZSET 1
 
-/* Misc Missing Windows defines */
-#define PATH_MAX 1024
+/* Define to 1 if you have the `uintptr_t' standard type. */
+#define HAVE_UINTPTR_T 1
 
-/*
- * Windows Sockets errors redefined as regular Berkeley error constants.
- */
-#define ENOBUFS WSAENOBUFS
-#define ENOTCONN WSAENOTCONN
+/* Define to 1 if you have the `vasprintf' function. */
+#define HAVE_VASPRINTF 1
+
+/* Misc missing Windows defines */
+#ifndef PATH_MAX    /* PATH_MAX is defined in win32/dirent.h too. Relevant, if included before rrd_config.h */
+#define PATH_MAX _MAX_PATH  /* max. length of full pathname is 260 under Windows, _MAX_PATH is defined in stdlib.h */
+#endif
 
 
 #include <ctype.h>
@@ -111,22 +122,39 @@
 #include <stdlib.h>
 #include <WinSock.h>
 
+#include <errno.h>  /* errno.h has to be included before the redefinitions of ENOBUFS and ENOTCONN below */
+/*
+ * Windows Sockets errors redefined as regular Berkeley error constants.
+ */
+#undef ENOBUFS  /* undefine first, because this is defined in errno.h and redefined here */
+#define ENOBUFS WSAENOBUFS
+#undef ENOTCONN /* undefine first, because this is defined in errno.h and redefined here */
+#define ENOTCONN WSAENOTCONN
 
-#include <errno.h>
 #include "mkstemp.h"
 
-
+/* _MSC_VER is not defined, when using the resource compiler (rc).
+ * See: https://docs.microsoft.com/en-us/windows/desktop/menurc/predefined-macros
+ * for how to conditionally compile the code with the RC compiler using RC_INVOKED
+*/
+#ifndef RC_INVOKED
+#if _MSC_VER < 1900
 #define isinf(a) (_fpclass(a) == _FPCLASS_NINF || _fpclass(a) == _FPCLASS_PINF)
 #define isnan _isnan
-#define finite _finite
 #define snprintf _snprintf
+#endif
+#endif
+
+#define finite _finite
 #define rrd_realloc(a,b) ( (a) == NULL ? malloc( (b) ) : realloc( (a) , (b) ))
 #define realpath(N,R) _fullpath((R),(N),_MAX_PATH)
 #define strcasecmp _stricmp
-#define strcasencmp _strnicmp
+#define strncasecmp _strnicmp
+#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
 
 // in MSVC++ 12.0 / Visual Studio 2013 is a definition of round in math.h
 // some values of _MSC_VER
+//MSVC++ 14.0 _MSC_VER == 1900 (Visual Studio 2015)
 //MSVC++ 12.0 _MSC_VER == 1800 (Visual Studio 2013)
 //MSVC++ 11.0 _MSC_VER == 1700 (Visual Studio 2012)
 //MSVC++ 10.0 _MSC_VER == 1600 (Visual Studio 2010)

@@ -18,7 +18,7 @@
  * library is identical to librrd, but it contains support code for per-thread
  * global variables currently used for error information only. This is similar
  * to how errno per-thread variables are implemented.  librrd_th must be linked
- * alongside of libpthred
+ * alongside of libpthread
  *
  * There is also a new file "THREADS", holding some documentation.
  *
@@ -47,20 +47,9 @@
 #include "rrd_snprintf.h"
 
 
-#if !(defined(NETWARE) || defined(WIN32))
+#if !(defined(NETWARE) || defined(_WIN32))
 extern char *tzname[2];
 #endif
-
-//Local prototypes
-size_t rrd_dump_opt_cb_fileout(
-    const void *data,
-    size_t len,
-    void *user);
-
-int rrd_dump_opt_r(
-    const char *filename,
-    char *outname,
-    int opt_noheader);
 
 int rrd_dump_cb_r(
     const char *filename,
@@ -101,7 +90,8 @@ int rrd_dump_cb_r(
 
     rrd_init(&rrd);
 
-    rrd_file = rrd_open(filename, &rrd, RRD_READONLY | RRD_READAHEAD);
+    rrd_file = rrd_open(filename, &rrd, RRD_READONLY | RRD_LOCK |
+                                        RRD_READAHEAD);
     if (rrd_file == NULL) {
         rrd_free(&rrd);
         return (-1);
@@ -139,8 +129,15 @@ int rrd_dump_cb_r(
 #else
 # error "Need strftime"
 #endif
+#if defined (_MSC_VER) && (_M_IX86)
+/* Otherwise (null) will be written to %s when compiling for 32-bit using MSVC */
+/* works for both, with or without _USE_32BIT_TIME_T */
+    CB_FMTS("\t<lastupdate>%ld</lastupdate> <!-- %s -->\n\n",
+        (long int) rrd.live_head->last_up, somestring);
+#else
     CB_FMTS("\t<lastupdate>%lld</lastupdate> <!-- %s -->\n\n",
         (long long int) rrd.live_head->last_up, somestring);
+#endif
     for (i = 0; i < rrd.stat_head->ds_cnt; i++) {
         CB_PUTS("\t<ds>\n");
 
@@ -221,7 +218,7 @@ int rrd_dump_cb_r(
         /* support for RRA parameters */
         CB_PUTS("\t\t<params>\n");
 
-        switch (cf_conv(rrd.rra_def[i].cf_nam)) {
+        switch (rrd_cf_conv(rrd.rra_def[i].cf_nam)) {
         case CF_HWPREDICT:
         case CF_MHWPREDICT:
             CB_FMTS("\t\t<hw_alpha>%0.10e</hw_alpha>\n",
@@ -305,7 +302,7 @@ int rrd_dump_cb_r(
                 CB_FMTS("\t\t\t<secondary_value>%0.10e</secondary_value>\n", value);
             }
 
-            switch (cf_conv(rrd.rra_def[i].cf_nam)) {
+            switch (rrd_cf_conv(rrd.rra_def[i].cf_nam)) {
             case CF_HWPREDICT:
             case CF_MHWPREDICT:
                 value = rrd.cdp_prep[i * rrd.stat_head->ds_cnt + ii].
@@ -422,10 +419,10 @@ int rrd_dump_cb_r(
             now = (rrd.live_head->last_up
                    - rrd.live_head->last_up
                    % (rrd.rra_def[i].pdp_cnt * rrd.stat_head->pdp_step))
-                + (timer * rrd.rra_def[i].pdp_cnt * rrd.stat_head->pdp_step);
+                + (timer * (long)rrd.rra_def[i].pdp_cnt * (long)rrd.stat_head->pdp_step);
 
             timer++;
-#if HAVE_STRFTIME
+#ifdef HAVE_STRFTIME
             localtime_r(&now, &tm);
             strftime(somestring, 255, "%Y-%m-%d %H:%M:%S %Z", &tm);
 #else
@@ -465,7 +462,7 @@ err_out:
 
 }
 
-size_t rrd_dump_opt_cb_fileout(
+static size_t rrd_dump_opt_cb_fileout(
     const void *data,
     size_t len,
     void *user)
@@ -540,8 +537,9 @@ int rrd_dump(
     while ((opt = optparse_long(&options, longopts, NULL)) != -1) {
         switch (opt) {
         case 'd':
-            if (opt_daemon != NULL)
+            if (opt_daemon != NULL) {
                     free (opt_daemon);
+            }
             opt_daemon = strdup(options.optarg);
             if (opt_daemon == NULL)
             {
@@ -569,6 +567,9 @@ int rrd_dump(
                           "[--no-header|-n]\n"
                           "[--daemon|-d address]\n"
                           "file.rrd [file.xml]", options.argv[0]);
+            if (opt_daemon != NULL) {
+            	free(opt_daemon);
+            }
             return (-1);
             break;
         }
@@ -579,11 +580,16 @@ int rrd_dump(
                       "[--no-header|-n]\n"
                       "[--daemon|-d address]\n"
                        "file.rrd [file.xml]", options.argv[0]);
+        if (opt_daemon != NULL) {
+            free(opt_daemon);
+        }
         return (-1);
     }
 
     rc = rrdc_flush_if_daemon(opt_daemon, options.argv[options.optind]);
-    if (opt_daemon) free(opt_daemon);
+    if (opt_daemon != NULL) {
+    	free(opt_daemon);
+    }
     if (rc) return (rc);
 
     if ((options.argc - options.optind) == 2) {

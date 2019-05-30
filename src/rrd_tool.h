@@ -14,7 +14,7 @@ extern    "C" {
 
 #include "rrd.h"
 
-#if defined(_WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)
+#if defined(_WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__) && !defined(__MINGW32__)
 
 /* Win32 only includes */
 
@@ -133,8 +133,9 @@ typedef int (*rrd_fetch_cb_t)(
 #define RRD_COPY        (1<<4)
 #define RRD_EXCL        (1<<5)
 #define RRD_READVALUES  (1<<6)
+#define RRD_LOCK        (1<<7)
 
-    enum cf_en cf_conv(
+    enum cf_en rrd_cf_conv(
     const char *string);
     enum dst_en dst_conv(
     const char *string);

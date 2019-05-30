@@ -41,10 +41,10 @@ Where you want to install the software.
 Once you have decided. Save the two locations into environment variables.
 
  BUILD_DIR=/tmp/rrdbuild
- INSTALL_DIR=/opt/rrdtool-1.5.999
+ INSTALL_DIR=/opt/rrdtool-1.7.0
 
 
-If your F</tmp> is mounted with the option noexec (RHEL seems todo that) you have to choose
+If your F</tmp> is mounted with the option noexec (RHEL seems to do that) you have to choose
 a different directory!
 
 Now make sure the BUILD_DIR exists and go there:
@@ -53,11 +53,11 @@ Now make sure the BUILD_DIR exists and go there:
  cd $BUILD_DIR
 
 Lets first assume you already have all the necessary libraries
-pre-installed. 
+pre-installed.
 
- wget http://oss.oetiker.ch/rrdtool/pub/rrdtool-1.5.999.tar.gz
- gunzip -c rrdtool-1.5.999.tar.gz | tar xf -
- cd rrdtool-1.5.999
+ wget http://oss.oetiker.ch/rrdtool/pub/rrdtool-1.7.0.tar.gz
+ gunzip -c rrdtool-1.7.0.tar.gz | tar xf -
+ cd rrdtool-1.7.0
  ./configure --prefix=$INSTALL_DIR && make && make install
 
 Ok, this was very optimistic. This try will probably have ended with
@@ -86,7 +86,7 @@ xrender is required for compilation with cairo. This is not true and also
 bad since OpenSolaris does not include an F<xrender.pc> file. Use Perl to
 fix this:
 
- perl -i~ -p -e 's/(Requires.*?)\s*xrender.*/$1/' /usr/lib/pkgconfig/cairo.pc 
+ perl -i~ -p -e 's/(Requires.*?)\s*xrender.*/$1/' /usr/lib/pkgconfig/cairo.pc
 
 Make sure the RRDtool build system finds your new compiler
 
@@ -165,7 +165,7 @@ the syntax again differs from system to system:
 
 =item Solaris
 
- export LDFLAGS=-R${INSTALL_DIR}/lib 
+ export LDFLAGS=-R${INSTALL_DIR}/lib
 
 if you are using the Sun Studio/Forte compiler, you may also want to set
 
@@ -174,7 +174,7 @@ if you are using the Sun Studio/Forte compiler, you may also want to set
 
 =item Linux
 
- export LDFLAGS="-Wl,--rpath -Wl,${INSTALL_DIR}/lib" 
+ export LDFLAGS="-Wl,--rpath -Wl,${INSTALL_DIR}/lib"
 
 =item HPUX
 
@@ -184,7 +184,7 @@ if you are using the Sun Studio/Forte compiler, you may also want to set
 
  export LDFLAGS="-Wl,-blibpath:${INSTALL_DIR}/lib"
 
-=back 
+=back
 
 If you have GNU make installed and it is not called 'make',
 then do
@@ -216,7 +216,7 @@ environment variable will be helpful.
 
 =head3 Building zlib
 
-Chances are very high that you already have that on your system ... 
+Chances are very high that you already have that on your system ...
 
  cd $BUILD_DIR
  wget http://oss.oetiker.ch/rrdtool/pub/libs/zlib-1.2.3.tar.gz
@@ -231,7 +231,7 @@ Chances are very high that you already have that on your system ...
 Libpng itself requires zlib to build, so we need to help a bit. If you
 already have a copy of zlib on your system (which is very likely) you can
 drop the settings of LDFLAGS and CPPFLAGS. Note that the backslash (\) at
-the end of line 4 means that line 4 and line 5 are on one line.
+the end of lines means that the command is split over multiple lines.
 
  cd $BUILD_DIR
  wget http://oss.oetiker.ch/rrdtool/pub/libs/libpng-1.2.18.tar.gz
@@ -305,7 +305,7 @@ config file.
  $MAKE
  $MAKE install
 
-When building on Solaris you may want todo
+When building on Solaris you may want to do
 
  ./configure --prefix=$INSTALL_DIR \
     --enable-xlib=no \
@@ -345,7 +345,7 @@ because it seems that a fair number of people have ill configured python and
 tcl setups that would prevent RRDtool from building if they are included in
 their current state.
 
- cd $BUILD_DIR/rrdtool-1.5.999
+ cd $BUILD_DIR/rrdtool-1.7.0
  ./configure --prefix=$INSTALL_DIR --disable-tcl --disable-python
  $MAKE clean
  $MAKE

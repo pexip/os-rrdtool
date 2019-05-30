@@ -25,6 +25,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <glib.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
@@ -33,7 +34,7 @@
 #include <libgen.h>
 #include <unistd.h>
 #endif
-#ifdef WIN32
+#ifdef _WIN32
 #	define random() rand()
 #	define srandom(x) srand(x)
 #	define getpid() 0
@@ -75,7 +76,7 @@ int rrd_add_ptr_chunk(void ***dest, size_t *dest_size, void *src,
 
     if (*alloc == *dest_size)
     {
-        temp = (void **) rrd_realloc(*dest, (*alloc+chunk) * sizeof(*dest));
+        temp = (void **) rrd_realloc(*dest, (*alloc+chunk) * sizeof(**dest));
         if (!temp)
             return 0;
 
@@ -216,13 +217,13 @@ int rrd_mkdir_p(const char *pathname_unsafe, mode_t mode)
     free(base_dir);
 
     /* keep errno as set by mkdir() */
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(__MINGW32__)
     if (0 != mkdir(pathname)) {
         free(pathname);
         return -1;
     }
 #else
-    if (0 != mkdir(pathname, mode)) {
+    if ((mkdir(pathname, mode) != 0) && (errno != EEXIST)) {
         free(pathname);
         return -1;
     }
@@ -281,3 +282,10 @@ const char * rrd_scaled_duration (const char * token,
     return NULL;
 }
 
+void rrd_thread_init(void)
+{
+#if !GLIB_CHECK_VERSION(2, 32, 0)
+    if (!g_thread_supported())
+        g_thread_init(NULL);
+#endif
+}

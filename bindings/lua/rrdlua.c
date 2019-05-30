@@ -1,5 +1,5 @@
 /*
- * Lua bindings for RRDTool
+ * Lua bindings for RRDtool
  *
  * This software is licensed to the public under the Free Software
  * Foundation's GNU GPL, version 2 or later. You may obtain a copy
@@ -170,12 +170,14 @@ lua_rrd_resize (lua_State * L)
   return 0;
 }
 
+#ifdef HAVE_RRD_RESTORE
 static int
 lua_rrd_restore (lua_State * L)
 {
   rrd_common_call(L, "restore", rrd_restore);
   return 0;
 }
+#endif
 
 static int
 lua_rrd_tune (lua_State * L)
@@ -338,7 +340,7 @@ set_info (lua_State * L)
   lua_pushliteral (L, "Copyright (C) 2008 Fidelis Assis");
   lua_settable (L, -3);
   lua_pushliteral (L, "_DESCRIPTION");
-  lua_pushliteral (L, "RRD-lua is a Lua binding for RRDTool.");
+  lua_pushliteral (L, "RRD-lua is a Lua binding for RRDtool.");
   lua_settable (L, -3);
   lua_pushliteral (L, "_NAME");
   lua_pushliteral (L, "RRD-Lua");
@@ -366,14 +368,18 @@ static const struct luaL_Reg rrd[] = {
 #endif
   {"last", lua_rrd_last},
   {"resize", lua_rrd_resize},
+#ifdef HAVE_RRD_RESTORE
   {"restore", lua_rrd_restore},
+#endif
   {"tune", lua_rrd_tune},
   {"update", lua_rrd_update},
   {"flushcached", lua_rrd_flushcached},
 #if defined(DINF)
   {"info", lua_rrd_info},
   {"updatev", lua_rrd_updatev},
+#ifdef HAVE_RRD_GRAPH
   {"graphv", lua_rrd_graphv},
+#endif
 #endif
   {NULL, NULL}
 };

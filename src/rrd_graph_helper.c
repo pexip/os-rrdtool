@@ -5,6 +5,10 @@
  *                     this code initially written by Alex van den Bogaerdt
  ****************************************************************************/
 
+#ifdef __MINGW64__
+#define __USE_MINGW_ANSI_STDIO 1    /* for %lli */
+#endif
+
 #include <locale.h>
 #include "rrd_config.h"
 #ifdef HAVE_STDINT_H
@@ -140,20 +144,20 @@ int getMappedKeyValueArgument(const char* key,int flag, parsedargs_t* pa,
 }
 
 int getLong(const char* v,long *val,char**extra,int base) {
+  if (extra == NULL) {
+    return 0;
+  }
+
   /* try to execute the parser */
   /* NOTE that this may be a bit different from the original parser */
   *extra=NULL;
   *val=strtol(v,extra,base);
   /* and error handling */
-  if (extra==NULL) {
-    return 0;
-  } else {
-    if (*extra==v) {
-      return -1; /* failed miserably */
-    }  else {
-      if ((*extra)[0]==0) { return 0; }
-      return 1; /* got extra bytes */
-    }
+  if (*extra==v) {
+    return -1; /* failed miserably */
+  }  else {
+    if ((*extra)[0]==0) { return 0; }
+    return 1; /* got extra bytes */
   }
   /* not found, so return error */
   return -2;
@@ -301,8 +305,7 @@ int parseArguments(const char* origarg, parsedargs_t* pa) {
   return 0;
 }
 
-int parse_color( const char *const, struct gfx_color_t *);
-int parse_color( const char *const string, struct gfx_color_t *c)
+static int parse_color( const char *const string, struct gfx_color_t *c)
 {
   unsigned int r = 0, g = 0, b = 0, a = 0, i;
 
@@ -367,6 +370,7 @@ int parse_color( const char *const string, struct gfx_color_t *c)
 #define PARSE_YAXIS        (PARSE_FIELD1|(1ULL<<14))
 #define PARSE_REDUCE       (PARSE_FIELD1|(1ULL<<15))
 #define PARSE_SKIPSCALE    (PARSE_FIELD1|(1ULL<<16))
+#define PARSE_DAEMON       (PARSE_FIELD1|(1ULL<<17))
 
 #define PARSE_DASHES       (PARSE_FIELD1|(1ULL<<20))
 #define PARSE_GRADHEIGHT   (PARSE_FIELD1|(1ULL<<21))
@@ -506,10 +510,19 @@ static graph_desc_t* newGraphDescription(image_desc_t *const im,enum gf_en gf,pa
   if (bitscmp(PARSE_REDUCE)) {
     char *reduce=getKeyValueArgument("reduce",1,pa);
     if (reduce) {
-      gdp->cf_reduce=cf_conv(reduce);
+      gdp->cf_reduce=rrd_cf_conv(reduce);
       gdp->cf_reduce_set=1;
       dprintfparsed("got reduce: %s (%i)\n",reduce,gdp->cf_reduce);
       if (((int)gdp->cf_reduce)==-1) { rrd_set_error("bad reduce CF: %s",reduce); return NULL; }
+    }
+  }
+  if (bitscmp(PARSE_DAEMON)) {
+    char *daemon=getKeyValueArgument("daemon",1,pa);
+    if (daemon) {
+      /* graph_desc_t: char daemon[256] */
+      strncpy(gdp->daemon,daemon,255);
+      gdp->daemon[255] = '\0';
+      dprintfparsed("got daemon: %s\n", gdp->daemon);
     }
   }
   if (bitscmp(PARSE_XAXIS)) {
@@ -532,7 +545,7 @@ static graph_desc_t* newGraphDescription(image_desc_t *const im,enum gf_en gf,pa
     double linewidth = 1;
     char *t,*x;
     if ((t=getKeyValueArgument("linewidth",1,pa))&&(*t!=0)) {
-      if ((getDouble(t,&linewidth,&x))||(linewidth<=0)) {
+      if ((getDouble(t,&linewidth,&x))||(linewidth<0)) {
 	rrd_set_error("Bad line width: %s",t); return NULL;
       }
     }
@@ -742,13 +755,6 @@ static graph_desc_t* newGraphDescription(image_desc_t *const im,enum gf_en gf,pa
     if (bitscmp(PARSE_COLOR2) && (! color2) && (h2)) { color2=h2;}
   }
 
-  /* clean up vname escaping on second tries */
-  if (bits & PARSE_RETRY) {
-    if (vname && (*vname>128)) {
-      *vname-=128;
-    }
-  }
-
   /* check if we are reusing the vname */
   if (vname) {
     int idx=find_var(im, vname);
@@ -783,11 +789,20 @@ static graph_desc_t* newGraphDescription(image_desc_t *const im,enum gf_en gf,pa
   }
 
   /* and assign it */
-  if (vname) { strncpy(gdp->vname,vname,MAX_VNAME_LEN + 1);}
-  if (rrd) { strncpy(gdp->rrd,rrd,1024); }
-  if (ds) { strncpy(gdp->ds_nam,ds,DS_NAM_SIZE); }
+  if (vname) {
+    strncpy(gdp->vname,vname,MAX_VNAME_LEN);
+    gdp->vname[MAX_VNAME_LEN] = '\0';
+  }
+  if (rrd) {
+    strncpy(gdp->rrd,rrd, 1023);
+    gdp->rrd[1023] = '\0';
+  }
+  if (ds) {
+    strncpy(gdp->ds_nam,ds,DS_NAM_SIZE - 1);
+    gdp->ds_nam[DS_NAM_SIZE - 1] = '\0';
+  }
   if (cf) {
-    gdp->cf=cf_conv(cf);
+    gdp->cf=rrd_cf_conv(cf);
     if (((int)gdp->cf)==-1) {
       rrd_set_error("bad CF: %s",cf); return NULL; }
   } else { if (bitscmp(PARSE_CF)) { gdp->cf = (enum cf_en) -1; }}
@@ -837,25 +852,22 @@ static graph_desc_t* newGraphDescription(image_desc_t *const im,enum gf_en gf,pa
 #define set_match(str,pat,cmd) if (strcmp(pat, str) == 0)  { cmd ;}
 
 /* prototypes */
-int parse_axis(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_def(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_cvdef(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_line(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_area(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_stack(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_print(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_gprint(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_comment(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_hvrule(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_grad(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_tick(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_textalign(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_shift(enum gf_en,parsedargs_t*,image_desc_t *const);
-int parse_xport(enum gf_en,parsedargs_t*,image_desc_t *const);
+static int parse_axis(enum gf_en,parsedargs_t*,image_desc_t *const);
+static int parse_def(enum gf_en,parsedargs_t*,image_desc_t *const);
+static int parse_cvdef(enum gf_en,parsedargs_t*,image_desc_t *const);
+static int parse_line(enum gf_en,parsedargs_t*,image_desc_t *const);
+static int parse_area(enum gf_en,parsedargs_t*,image_desc_t *const);
+static int parse_stack(enum gf_en,parsedargs_t*,image_desc_t *const);
+static int parse_gprint(enum gf_en,parsedargs_t*,image_desc_t *const);
+static int parse_comment(enum gf_en,parsedargs_t*,image_desc_t *const);
+static int parse_hvrule(enum gf_en,parsedargs_t*,image_desc_t *const);
+static int parse_tick(enum gf_en,parsedargs_t*,image_desc_t *const);
+static int parse_textalign(enum gf_en,parsedargs_t*,image_desc_t *const);
+static int parse_shift(enum gf_en,parsedargs_t*,image_desc_t *const);
+static int parse_xport(enum gf_en,parsedargs_t*,image_desc_t *const);
 
-/* this is needed for LINE,AREA,STACk so that the labels get done correctly... */
-void legend_shift(char *legend);
-void legend_shift(char *legend)
+/* this is needed for LINE,AREA,STACK so that the labels get done correctly... */
+static void legend_shift(char *legend)
 {
   if (!legend || !legend[0]) { return; }
   memmove(legend+2,legend,strlen(legend));
@@ -864,7 +876,7 @@ void legend_shift(char *legend)
 }
 
 /* implementations */
-int parse_axis(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
+static int parse_axis(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
 
 #if 0
   /* define X or y axis */
@@ -909,7 +921,7 @@ int parse_axis(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   return 0;
 }
 
-int parse_def(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
+static int parse_def(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   /* get new graph that we fill */
   graph_desc_t *gdp=newGraphDescription(im,gf,pa,
 					PARSE_VNAMERRDDSCF
@@ -917,6 +929,7 @@ int parse_def(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
 					|PARSE_STEP
 					|PARSE_END
 					|PARSE_REDUCE
+					|PARSE_DAEMON
 					);
   /* retry in case of errors modifying the name*/
   if (!gdp) {
@@ -935,7 +948,7 @@ int parse_def(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
 
 	  /* and keep a copy of the error */
 	  char original_error[4096];
-	  strncpy(original_error,rrd_get_error(),sizeof(original_error));
+	  strncpy(original_error,rrd_get_error(),sizeof(original_error) - 1);
 	  /* and clear the error */
 	  rrd_clear_error();
 
@@ -946,6 +959,7 @@ int parse_def(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
 					|PARSE_STEP
 					|PARSE_END
 					|PARSE_REDUCE
+					|PARSE_DAEMON
 				        |PARSE_RETRY
 					);
 	  /* on error, we restore the original error and return */
@@ -970,13 +984,14 @@ int parse_def(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   dprintf("STEP  : (%lld)\n",(long long int)gdp->step);
   dprintf("END   : (%lld)\n",(long long int)gdp->end);
   dprintf("REDUCE: (%i)\n",gdp->cf_reduce);
+  dprintf("DAEMON: %s\n",gdp->daemon);
   dprintf("=================================\n");
 
   /* and return fine */
   return 0;
 }
 
-int parse_cvdef(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
+static int parse_cvdef(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   /* get new graph that we fill */
   graph_desc_t *gdp=newGraphDescription(im,gf,pa,
 					PARSE_VNAMERPN
@@ -1030,7 +1045,7 @@ int parse_cvdef(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
 }
 
 
-int parse_line(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
+static int parse_line(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   /* get new graph that we fill */
   graph_desc_t *gdp=newGraphDescription(im,gf,pa,
 					PARSE_VNAMECOLORLEGEND
@@ -1075,7 +1090,7 @@ int parse_line(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   return 0;
 }
 
-int parse_area(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
+static int parse_area(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   /* get new graph that we fill */
   graph_desc_t *gdp=newGraphDescription(im,gf,pa,
 					PARSE_VNAMECOLORLEGEND
@@ -1113,7 +1128,7 @@ int parse_area(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   return 0;
 }
 
-int parse_stack(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
+static int parse_stack(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   /* get new graph that we fill */
   graph_desc_t *gdp=newGraphDescription(im,gf,pa,
 					PARSE_VNAMECOLORLEGEND
@@ -1168,7 +1183,7 @@ int parse_stack(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   return 0;
 }
 
-int parse_hvrule(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
+static int parse_hvrule(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   /* get new graph that we fill */
   graph_desc_t *gdp=newGraphDescription(im,gf,pa,
 					PARSE_VNAMECOLORLEGEND
@@ -1220,7 +1235,7 @@ int parse_hvrule(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   return 0;
 }
 
-int parse_gprint(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im) {
+static int parse_gprint(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im) {
   /* get new graph that we fill */
   graph_desc_t *gdp=newGraphDescription(im,gf,pa,
 					PARSE_VNAMEREF
@@ -1235,7 +1250,8 @@ int parse_gprint(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im) {
     dprintfparsed("Processing positional vname\n");
     keyvalue_t* first=getFirstUnusedArgument(1,pa);
     if (first) {
-      strncpy(gdp->vname,first->keyvalue,MAX_VNAME_LEN + 1);
+      strncpy(gdp->vname,first->keyvalue,MAX_VNAME_LEN);
+      gdp->vname[MAX_VNAME_LEN] = '\0';
       /* get type of reference */
       gdp->vidx=find_var(im, gdp->vname);
       if (gdp->vidx<0) {
@@ -1254,7 +1270,7 @@ int parse_gprint(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im) {
     if (((int)gdp->cf)==-1) {
       keyvalue_t* first=getFirstUnusedArgument(1,pa);
       if (first) {
-	gdp->cf=cf_conv(first->value);
+	gdp->cf=rrd_cf_conv(first->value);
 	if (((int)gdp->cf)==-1) {
 	  rrd_set_error("bad CF for DEF/CDEF: %s",first->value); return 1; }
       } else { rrd_set_error("No positional CDEF"); return 1; }
@@ -1294,7 +1310,7 @@ int parse_gprint(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im) {
   return 0;
 }
 
-int parse_comment(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
+static int parse_comment(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   /* get new graph that we fill */
   graph_desc_t *gdp=newGraphDescription(im,gf,pa,
 					PARSE_LEGEND
@@ -1317,7 +1333,7 @@ int parse_comment(enum gf_en gf,parsedargs_t*pa,image_desc_t *const im){
   return 0;
 }
 
-int parse_tick(enum gf_en gf,parsedargs_t* pa,image_desc_t *const im) {
+static int parse_tick(enum gf_en gf,parsedargs_t* pa,image_desc_t *const im) {
   /* get new graph that we fill */
   graph_desc_t *gdp=newGraphDescription(im,gf,pa,
 					PARSE_VNAMECOLORFRACTIONLEGEND
@@ -1342,14 +1358,18 @@ int parse_tick(enum gf_en gf,parsedargs_t* pa,image_desc_t *const im) {
   return 0;
 }
 
-int parse_textalign(enum gf_en gf,parsedargs_t* pa,image_desc_t *const im) {
+static int parse_textalign(enum gf_en gf,parsedargs_t* pa,image_desc_t *const im) {
+  keyvalue_t *kv;
   /* get new graph that we fill */
   graph_desc_t *gdp=newGraphDescription(im,gf,pa,0);
   if (!gdp) { return 1;}
 
   /* get align */
   char* align=getKeyValueArgument("align",1,pa);
-  if (!align) align=getFirstUnusedArgument(1,pa)->value;
+  if (!align) {
+    kv=getFirstUnusedArgument(1,pa);
+    if (kv) align=kv->value;
+  }
   if (!align) { rrd_set_error("No alignment given"); return 1; }
 
   /* parse align */
@@ -1375,7 +1395,8 @@ int parse_textalign(enum gf_en gf,parsedargs_t* pa,image_desc_t *const im) {
   return 0;
 }
 
-int parse_shift(enum gf_en gf,parsedargs_t* pa,image_desc_t *const im) {
+static int parse_shift(enum gf_en gf,parsedargs_t* pa,image_desc_t *const im) {
+  keyvalue_t *kv;
   /* get new graph that we fill */
   graph_desc_t *gdp=newGraphDescription(im,gf,pa,PARSE_VNAMEREFPOS);
   if (!gdp) { return 1;}
@@ -1397,7 +1418,10 @@ int parse_shift(enum gf_en gf,parsedargs_t* pa,image_desc_t *const im) {
 
   /* now parse the "shift" */
   char* shift=getKeyValueArgument("shift",1,pa);
-  if (!shift) {shift=getFirstUnusedArgument(1,pa)->value;}
+  if (!shift) {
+    kv=getFirstUnusedArgument(1,pa);
+    if (kv) shift=kv->value;
+  }
   if (!shift) { rrd_set_error("No shift given"); return 1; }
   /* identify shift */
   gdp->shidx=find_var(im, shift);
@@ -1435,13 +1459,17 @@ int parse_shift(enum gf_en gf,parsedargs_t* pa,image_desc_t *const im) {
   if (gdp->shidx>=0) {
     dprintf("SHIFTBY : %s (%i)\n",im->gdes[gdp->shidx].vname,gdp->shidx);
   } else {
+#if defined _WIN32 && SIZEOF_TIME_T == 8    /* in case of __MINGW64__, _WIN64 and _MSC_VER >= 1400 (ifndef _USE_32BIT_TIME_T) */
+    dprintf("SHIFTBY : %lli\n",gdp->shval); /* argument 3 has type 'time_t {aka long long int}' */
+#else
     dprintf("SHIFTBY : %li\n",gdp->shval);
+#endif
   }
   dprintf("=================================\n");
   /* and return */
   return 0;
 }
-int parse_xport(enum gf_en gf,parsedargs_t* pa,image_desc_t *const im) {
+static int parse_xport(enum gf_en gf,parsedargs_t* pa,image_desc_t *const im) {
   /* get new graph that we fill */
   graph_desc_t *gdp=newGraphDescription(im,gf,pa,PARSE_VNAMECOLORLEGEND);
   if (!gdp) { return 1;}

@@ -1,3 +1,48 @@
+rrdtool (1.7.1-2) unstable; urgency=medium
+
+  * Cherry pick commit from 1.7.2 to prevent daemon segfault. 
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Thu, 30 May 2019 22:28:06 +0200
+
+rrdtool (1.7.1-1) unstable; urgency=medium
+
+  * New upstream version (Closes: #891491, #898184):
+    - New symbol rrd_dump_opt_r in librrd.
+    - Installed new help file rrd_pdpcalc.
+  * Migrated git packaging repository to salsa.
+  * Added lintian override hardening-no-fortify-functions for python and
+    python3 packages.
+  * Bumped standard to 4.3.0.
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Thu, 07 Feb 2019 17:08:22 +0100
+
+rrdtool (1.7.0-1) unstable; urgency=medium
+
+  * New upstream version:
+    - Refreshed copyrights. Python bindings switch to LGPL-2.1+.
+    - Acknowledged new symbols in librrd.
+    - Added build dependency on python-setuptools.
+    - Renamed python egg-info.
+    - Added rrdlist documentation.
+    - Added installation translations.
+    - Refreshed patches.
+    - Added clean-up for left over files in tests/.
+  * Dropped lua5.1 transitional packages.
+  * Dropped reproducible build C hacks.
+  * Clean up uploaders list. (Closes: #879510, 879511)
+  * Build a python3-rrdtool package, using pybuild. Thanks to Matthias Klose.
+    (Closes: #883164)
+  * Bumped standard to 4.1.3:
+    - Use secure scheme in copyright format.
+    - Changed priorities from extra to optional.
+  * rrdcached: Added lsb-base dependency.
+  * Bumped compat to 11:
+    - autoreconf is now implicit. Dropped dh --with autoreconf and
+      build-dependency.
+    - Moved --fail-missing from dh_install to dh_missing.
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Wed, 07 Feb 2018 23:27:00 +0000
+
 rrdtool (1.6.0-1) unstable; urgency=low
 
   * New upstream version:
@@ -13,11 +58,11 @@ rrdtool (1.6.0-1) unstable; urgency=low
  -- Jean-Michel Vourgère <nirgal@debian.org>  Mon, 25 Apr 2016 09:23:34 +0200
 
 rrdtool (1.5.6-1) unstable; urgency=medium
- 
+
   * New upstream release.
   * Use upstream version of patch tests_noverbose.
   * Partial drop of d/patches/reproducible-builds, now built in pod2man.
- 
+
  -- Jean-Michel Vourgère <nirgal@debian.org>  Mon, 25 Apr 2016 09:15:00 +0200
 
 rrdtool (1.5.5-4) unstable; urgency=high
@@ -721,7 +766,7 @@ rrdtool (1.2.11-0.5) unstable; urgency=low
 rrdtool (1.2.11-0.4) unstable; urgency=low
 
   * NMU.
-  * Tighten the dependency of the binary packages on librrd2 to assert the use 
+  * Tighten the dependency of the binary packages on librrd2 to assert the use
     of a recent version depending on ttf-dejavu.
   * Fix 'rrdtool restore', replace the workaround from 1.2.11-0.3 with a patch
     from the upstream repository.  Closes: #323771.
@@ -910,7 +955,7 @@ rrdtool (1.0.33-9) unstable; urgency=low
 
 rrdtool (1.0.33-8) unstable; urgency=low
 
-  * Use AM_MAINTAINER_MODE to keep the makefiles from trying to rebuild 
+  * Use AM_MAINTAINER_MODE to keep the makefiles from trying to rebuild
     autoconf/automake stuff during the build (Closes: #117599)
   * Regenerated everything AGAIN.
   * Use DESTDIR instead of prefix= during "make install"
@@ -1137,7 +1182,7 @@ rrdtool (1.0.13-1) unstable; urgency=low
 
 rrdtool (1.0.10-1) unstable; urgency=low
 
-  * New upstream version. 
+  * New upstream version.
 
  -- Matt Zimmerman <mdz@csh.rit.edu>  Mon, 10 Jan 2000 16:46:33 -0800
 
@@ -1166,5 +1211,3 @@ rrdtool (1.0.7-1) unstable; urgency=low
     included with gd as of 1.6)
 
  -- Matt Zimmerman <mdz@csh.rit.edu>  Sat, 11 Sep 1999 13:29:29 -0700
-
-

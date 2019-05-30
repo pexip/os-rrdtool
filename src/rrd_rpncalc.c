@@ -7,6 +7,15 @@
 #include <limits.h>
 #include <locale.h>
 #include <stdlib.h>
+#ifdef __MINGW32__
+#include <pthread.h>
+/* time.h of MinGW-w64 requires _POSIX_THREAD_SAFE_FUNCTIONS to be defined in order to provide
+ * localtime_r. _POSIX_THREAD_SAFE_FUNCTIONS is defined in pthread_unistd.h (included from pthread.h).
+ * Alternatives here would be to either include "rrd_tool.h" before <time.h> or remove include of <time.h>
+ * from rrd_rpncalc.c, because time.h is included via rrd_tool.h ...
+ * However, let's do it this way, by including pthread.h here, only if __MINGW32__ is defined,
+ * in order to avoid any changes concerning other systems. */
+#endif
 #include <time.h>
 #include "rrd_tool.h"
 
@@ -18,13 +27,13 @@
 #include "rrd_rpncalc.h"
 // #include "rrd_graph.h"
 
-short     addop2str(
+static short addop2str(
     enum op_en op,
     enum op_en op_type,
     char *op_str,
     char **result_str,
     unsigned short *offset);
-int       tzoffset(
+static int tzoffset(
     time_t);            /* used to implement LTIME */
 
 short rpn_compact(
@@ -218,7 +227,7 @@ void rpn_compact2str(
 
 }
 
-short addop2str(
+static short addop2str(
     enum op_en op,
     enum op_en op_type,
     char *op_str,
@@ -1365,7 +1374,7 @@ short rpn_calc(
 
 /* figure out what the local timezone offset for any point in
    time was. Return it in seconds */
-int tzoffset(
+static int tzoffset(
     time_t now)
 {
     int       gm_sec, gm_min, gm_hour, gm_yday, gm_year,

@@ -30,7 +30,8 @@
 
 #include "rrd_strtod.h"
 
-#if defined(_WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)
+#if defined(_WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__) && !defined(__MINGW32__)
+/* Remark: HAVE_GETTIMEOFDAY could be used here alternatively */
 
 /*
  * WIN32 does not have gettimeofday	and struct timeval. This is a quick and dirty
@@ -61,13 +62,7 @@ static int gettimeofday(
 #endif
 
 /* FUNCTION PROTOTYPES */
-
-int       rrd_update_r(
-    const char *filename,
-    const char *tmplt,
-    int argc,
-    const char **argv);
-int       _rrd_updatex(
+static int _rrd_updatex(
     const char *filename,
     const char *tmplt,
     int extra_flags,
@@ -372,7 +367,7 @@ static char *rrd_get_file_template(const char *filename) /* {{{ */
 
 	/* open file */
 	rrd_init(&rrd);
-	rrd_file = rrd_open(filename, &rrd, RRD_READONLY);
+	rrd_file = rrd_open(filename, &rrd, RRD_READONLY | RRD_LOCK);
 	if (rrd_file == NULL)
 		goto err_free;
 
@@ -688,10 +683,14 @@ int rrd_update(
     int       rc = -1;
     char     *opt_daemon = NULL;
 
+    rrd_thread_init();
     optparse_init(&options, argc, argv);
     while ((opt = optparse_long(&options,longopts,NULL)) != -1) {
         switch (opt) {
         case 't':
+            if (tmplt != NULL) {
+            	free(tmplt);
+            }
             tmplt = strdup(options.optarg);
             break;
 
@@ -700,8 +699,9 @@ int rrd_update(
             break;
 
         case 'd':
-            if (opt_daemon != NULL)
+            if (opt_daemon != NULL) {
                 free (opt_daemon);
+            }
             opt_daemon = strdup (options.optarg);
             if (opt_daemon == NULL)
             {
@@ -815,7 +815,7 @@ int rrd_updatex_v_r(
     return _rrd_updatex(filename, tmplt, extra_flags, argc, argv, pcdp_summary);
 }
 
-int _rrd_updatex(
+static int _rrd_updatex(
     const char *filename,
     const char *tmplt,
     int extra_flags,
@@ -859,7 +859,8 @@ int _rrd_updatex(
     }
 
     rrd_init(&rrd);
-    if ((rrd_file = rrd_open(filename, &rrd, RRD_READWRITE)) == NULL) {
+    rrd_file = rrd_open(filename, &rrd, RRD_READWRITE | RRD_LOCK);
+    if (rrd_file == NULL) {
         goto err_free;
     }
     /* We are now at the beginning of the rra's */
@@ -868,14 +869,6 @@ int _rrd_updatex(
     version = atoi(rrd.stat_head->version);
 
     initialize_time(&current_time, &current_time_usec, version);
-
-    /* get exclusive lock to whole file.
-     * lock gets removed when we close the file.
-     */
-    if (rrd_lock(rrd_file) != 0) {
-        rrd_set_error("could not lock RRD");
-        goto err_close;
-    }
 
     if (allocate_data_structures(&rrd, &updvals,
                                  &pdp_temp, tmplt, &tmpl_idx, &tmpl_cnt,
@@ -903,7 +896,8 @@ int _rrd_updatex(
                 if ((save_error = strdup(rrd_get_error())) != NULL) {
                     rrd_set_error("%s: %s", filename, save_error);
                     free(save_error);
-                }
+                } else
+                    rrd_set_error("error message was lost (out of memory)");
             }
             free(arg_copy);
             break;
@@ -1774,7 +1768,7 @@ static int update_all_cdp_prep(
 
     rra_start = rra_begin;
     for (rra_idx = 0; rra_idx < rrd->stat_head->rra_cnt; rra_idx++) {
-        current_cf = cf_conv(rrd->rra_def[rra_idx].cf_nam);
+        current_cf = rrd_cf_conv(rrd->rra_def[rra_idx].cf_nam);
         start_pdp_offset =
             rrd->rra_def[rra_idx].pdp_cnt -
             proc_pdp_cnt % rrd->rra_def[rra_idx].pdp_cnt;
@@ -2019,7 +2013,7 @@ static void initialize_cdp_val(
             fprintf(stderr,
                     "RRA %lu, DS %lu, both CDP_val and pdp_temp are DNAN!",
                     i, ii);
-            exit(-1);
+            break;
         }
 #endif
 #endif
@@ -2037,7 +2031,7 @@ static void initialize_cdp_val(
             fprintf(stderr,
                     "RRA %lu, DS %lu, both CDP_val and pdp_temp are DNAN!", i,
                     ii);
-            exit(-1);
+            break;
         }
 #endif
 #endif
@@ -2209,7 +2203,7 @@ static int update_aberrant_cdps(
         rra_start = rra_begin;
         for (rra_idx = 0; rra_idx < rrd->stat_head->rra_cnt; rra_idx++) {
             if (rrd->rra_def[rra_idx].pdp_cnt == 1) {
-                current_cf = cf_conv(rrd->rra_def[rra_idx].cf_nam);
+                current_cf = rrd_cf_conv(rrd->rra_def[rra_idx].cf_nam);
                 if (current_cf == CF_SEASONAL || current_cf == CF_DEVSEASONAL) {
                     if (scratch_idx == CDP_primary_val) {
                         lookup_seasonal(rrd, rra_idx, rra_start, rrd_file,
@@ -2384,8 +2378,8 @@ static int smooth_all_rras(
     unsigned long rra_idx;
 
     for (rra_idx = 0; rra_idx < rrd->stat_head->rra_cnt; ++rra_idx) {
-        if (cf_conv(rrd->rra_def[rra_idx].cf_nam) == CF_DEVSEASONAL ||
-            cf_conv(rrd->rra_def[rra_idx].cf_nam) == CF_SEASONAL) {
+        if (rrd_cf_conv(rrd->rra_def[rra_idx].cf_nam) == CF_DEVSEASONAL ||
+            rrd_cf_conv(rrd->rra_def[rra_idx].cf_nam) == CF_SEASONAL) {
 #ifdef DEBUG
             fprintf(stderr, "Running smoother for rra %lu\n", rra_idx);
 #endif

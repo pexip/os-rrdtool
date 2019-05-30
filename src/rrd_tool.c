@@ -6,7 +6,7 @@
 
 #include "rrd_config.h"
 
-#if defined(WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)
+#if defined(_WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <io.h>
@@ -20,15 +20,15 @@
 #include <locale.h>
 
 
-void      PrintUsage(
+static void PrintUsage(
     char *cmd);
-int       CountArgs(
+static int CountArgs(
     char *aLine);
-int       CreateArgs(
+static int CreateArgs(
     char *,
     char *,
     char **);
-int       HandleInputLine(
+static int HandleInputLine(
     int,
     char **,
     FILE *);
@@ -40,7 +40,7 @@ int       ChangeRoot = 0;
 #define MAX_LENGTH	10000
 
 
-void PrintUsage(
+static void PrintUsage(
     char *cmd)
 {
 
@@ -53,7 +53,7 @@ void PrintUsage(
     const char *help_list =
         N_
         ("Valid commands: create, update, updatev, graph, graphv,  dump, restore,\n"
-         "\t\tlast, lastupdate, first, info, fetch, tune\n"
+         "\t\tlast, lastupdate, first, info, list, fetch, tune,\n"
          "\t\tresize, xport, flushcached\n");
 
     const char *help_listremote =
@@ -81,6 +81,10 @@ void PrintUsage(
     const char *help_info =
         N_("* info - returns the configuration and status of the RRD\n\n"
            "\trrdtool info [--daemon|-d <addr> [--noflush|-F]] filename.rrd\n");
+
+    const char *help_listrrds =
+        N_("* list - returns the list of RRDs\n\n"
+           "\trrdtool list [--daemon <address>] [--noflush] <dirname>\n");
 
     const char *help_restore =
         N_("* restore - restore an RRD file from its XML form\n\n"
@@ -252,7 +256,7 @@ void PrintUsage(
         N_("RRDtool is distributed under the Terms of the GNU General\n"
            "Public License Version 2. (www.gnu.org/copyleft/gpl.html)\n\n"
            "For more information read the RRD manpages\n");
-    enum { C_NONE, C_CREATE, C_DUMP, C_INFO, C_RESTORE, C_LAST,
+    enum { C_NONE, C_CREATE, C_DUMP, C_INFO, C_LIST, C_RESTORE, C_LAST,
         C_LASTUPDATE, C_FIRST, C_UPDATE, C_FETCH, C_GRAPH, C_GRAPHV,
         C_TUNE,
         C_RESIZE, C_XPORT, C_QUIT, C_LS, C_CD, C_MKDIR, C_PWD,
@@ -267,6 +271,8 @@ void PrintUsage(
             help_cmd = C_DUMP;
         else if (!strcmp(cmd, "info"))
             help_cmd = C_INFO;
+        else if (!strcmp(cmd, "list"))
+            help_cmd = C_LIST;
         else if (!strcmp(cmd, "restore"))
             help_cmd = C_RESTORE;
         else if (!strcmp(cmd, "last"))
@@ -321,6 +327,9 @@ void PrintUsage(
         break;
     case C_INFO:
         puts(_(help_info));
+        break;
+    case C_LIST:
+        puts(_(help_listrrds));
         break;
     case C_RESTORE:
         puts(_(help_restore));
@@ -440,15 +449,15 @@ int main(
        according to localeconv(3) */       
     setlocale(LC_ALL, "");
 
-#if defined(WIN32) && !defined(__CYGWIN__)
+#if defined(_WIN32) && !defined(__CYGWIN__)
     setmode(fileno(stdout), O_BINARY);
     setmode(fileno(stdin), O_BINARY);
 #endif
 
 
-#if defined(HAVE_LIBINTL_H) && defined(BUILD_LIBINTL)
-    bindtextdomain(GETTEXT_PACKAGE, LOCALEDIR);
-    textdomain(GETTEXT_PACKAGE);
+#if ENABLE_NLS
+    bindtextdomain(PACKAGE, LOCALEDIR);
+    textdomain(PACKAGE);
 #endif
     if (argc == 1) {
         PrintUsage("");
@@ -456,7 +465,7 @@ int main(
     }
 
     if (((argc == 2) || (argc == 3)) && !strcmp("-", argv[1])) {
-#if HAVE_GETRUSAGE
+#ifdef HAVE_GETRUSAGE
         struct rusage myusage;
         struct timeval starttime;
         struct timeval currenttime;
@@ -511,7 +520,7 @@ int main(
                 printf("ERROR: creating arguments\n");
             } else {
                 if ( HandleInputLine(argc, myargv, stdout) == 0 ){
-#if HAVE_GETRUSAGE
+#ifdef HAVE_GETRUSAGE
                     getrusage(RUSAGE_SELF, &myusage);
                     gettimeofday(&currenttime, NULL);
                     printf("OK u:%1.2f s:%1.2f r:%1.2f\n",
@@ -546,7 +555,7 @@ int main(
 
 /* HandleInputLine is NOT thread safe - due to readdir issues,
    resolving them portably is not really simple. */
-int HandleInputLine(
+static int HandleInputLine(
     int argc,
     char **argv,
     FILE * out)
@@ -566,7 +575,8 @@ int HandleInputLine(
             }
             exit(0);
         }
-#if defined(HAVE_OPENDIR) && defined(HAVE_READDIR) && defined(HAVE_CHDIR) && defined(HAVE_SYS_STAT_H)
+/* MinGW-w64 has not got getuid() and only 1 argument for mkdir() */
+#if defined(HAVE_OPENDIR) && defined(HAVE_READDIR) && defined(HAVE_CHDIR) && defined(HAVE_SYS_STAT_H) && !defined(__MINGW32__)
         if (argc > 1 && strcmp("cd", argv[1]) == 0) {
             if (argc != 3) {
                 printf("ERROR: invalid parameter count for cd\n");
@@ -682,7 +692,15 @@ int HandleInputLine(
         rrd_info_print(data);
         rrd_info_free(data);
     }
+    else if (strcmp("list", argv[1]) == 0) {
+        char *list;
+        list = rrd_list(argc - 1, &argv[1]);
 
+	if (list) {
+	  printf("%s", list);
+	  free(list);
+	}
+    }
     else if (strcmp("--version", argv[1]) == 0 ||
              strcmp("version", argv[1]) == 0 ||
              strcmp("v", argv[1]) == 0 ||
@@ -699,11 +717,19 @@ int HandleInputLine(
     else if (strcmp("resize", argv[1]) == 0)
         rrd_resize(argc - 1, &argv[1]);
     else if (strcmp("last", argv[1]) == 0)
+#if defined _WIN32 && SIZEOF_TIME_T == 8    /* in case of __MINGW64__, _WIN64 and _MSC_VER >= 1400 (ifndef _USE_32BIT_TIME_T) */
+        printf("%lld\n", rrd_last(argc - 1, &argv[1]));
+#else
         printf("%ld\n", rrd_last(argc - 1, &argv[1]));
+#endif
     else if (strcmp("lastupdate", argv[1]) == 0) {
         rrd_lastupdate(argc - 1, &argv[1]);
     } else if (strcmp("first", argv[1]) == 0)
+#if defined _WIN32 && SIZEOF_TIME_T == 8    /* in case of __MINGW64__, _WIN64 and _MSC_VER >= 1400 (ifndef _USE_32BIT_TIME_T) */
+        printf("%lld\n", rrd_first(argc - 1, &argv[1]));
+#else
         printf("%ld\n", rrd_first(argc - 1, &argv[1]));
+#endif
     else if (strcmp("update", argv[1]) == 0)
         rrd_update(argc - 1, &argv[1]);
     else if (strcmp("fetch", argv[1]) == 0) {
@@ -721,7 +747,11 @@ int HandleInputLine(
                 printf("%20s", ds_namv[i]);
             printf("\n\n");
             for (ti = start + step; ti <= end; ti += step) {
+#if defined _WIN32 && SIZEOF_TIME_T == 8    /* in case of __MINGW64__, _WIN64 and _MSC_VER >= 1400 (ifndef _USE_32BIT_TIME_T) */
+                printf("%10llu:", ti);
+#else
                 printf("%10lu:", ti);
+#endif
                 for (ii = 0; ii < ds_cnt; ii++)
                     printf(" %0.10e", *(datai++));
                 printf("\n");
@@ -808,7 +838,7 @@ int HandleInputLine(
     return (0);
 }
 
-int CountArgs(
+static int CountArgs(
     char *aLine)
 {
     int       i = 0;
@@ -833,7 +863,7 @@ int CountArgs(
 /*
  * CreateArgs - take a string (aLine) and tokenize
  */
-int CreateArgs(
+static int CreateArgs(
     char *pName,
     char *aLine,
     char **argv)

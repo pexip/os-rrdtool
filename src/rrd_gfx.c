@@ -20,6 +20,8 @@
 #include "rrd_tool.h"
 #include "rrd_graph.h"
 
+#include "unused.h"
+
 
 /* create a new line */
 void gfx_line(
@@ -163,8 +165,6 @@ static PangoLayout *gfx_prep_text(
     const PangoFontDescription *pfd;
     cairo_t  *cr = im->cr;
 
-    static double last_tabwidth = -1;
-
 
 
     /* for performance reasons we might
@@ -177,10 +177,10 @@ static PangoLayout *gfx_prep_text(
     
     gchar    *utf8_text;
 
-    if (last_tabwidth < 0 || last_tabwidth != tabwidth){
+    if (im->last_tabwidth < 0 || im->last_tabwidth != tabwidth){
         PangoTabArray *tab_array;
         // fprintf(stderr,"t");
-        last_tabwidth = tabwidth;
+        im->last_tabwidth = tabwidth;
         tab_array = pango_tab_array_new(tab_count, (gboolean) (1));
         for (i = 1; i <= tab_count; i++) {
              pango_tab_array_set_tab(tab_array,
@@ -238,6 +238,22 @@ double gfx_get_text_width(
     pango_layout_get_pixel_extents(layout, NULL, &log_rect);
 /*    g_object_unref(layout); */
     return log_rect.width;
+}
+
+double gfx_get_text_height(
+    image_desc_t *im,
+    double UNUSED(start),
+    PangoFontDescription *font_desc,
+    double tabwidth,
+    char *text)
+{
+    PangoLayout *layout;
+    PangoRectangle log_rect;
+    gfx_color_t color = { 0, 0, 0, 0 };
+    layout = gfx_prep_text(im, 0.0, color, font_desc, tabwidth, text);
+    pango_layout_get_pixel_extents(layout, NULL, &log_rect);
+/*    g_object_unref(layout); */
+    return log_rect.height;
 }
 
 void gfx_text(
