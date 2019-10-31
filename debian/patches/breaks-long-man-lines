@@ -1,8 +1,9 @@
-Description: Allow breaking of long lines in max
+Description: Allow breaking of long lines in man
  .
- Adds zero width breaking space in long lines as hints where to cut.
+ Adds zero width breaking space in long lines as hints to where to cut.
  .
- Work around pod2man than don't convert them to \: as it should.
+ Work around pod2man that doesn't convert them to \: as it should. See
+ #941980.
 Author: Jean-Michel Vourgère <nirgal@debian.org>
 Forwarded: no
 Last-Update: 2015-08-09

@@ -5,7 +5,7 @@ RSYNC = rsync --rsh=ssh
 
 # build the following subdirectories
 
-SUBDIRS = po src bindings tests
+SUBDIRS = po src bindings tests etc
 
 if BUILD_DOCS
 SUBDIRS += doc
@@ -18,9 +18,8 @@ endif
  # the following files are not mentioned in any other Makefile
 EXTRA_DIST = COPYRIGHT CHANGES TODO CONTRIBUTORS THREADS VERSION LICENSE \
              rrdtool.spec favicon.ico bootstrap \
-             libtool \
+             libtool .indent.pro \
              m4/snprintf.m4 \
-             etc/rrdcached-default-redhat etc/rrdcached-init-redhat \
              win32/build-rrdtool.dot win32/build-rrdtool.pdf win32/build-rrdtool.svg \
              win32/librrd-4.def win32/librrd-4.rc win32/librrd-4.vcxproj \
              win32/Makefile.msc win32/README win32/README-MinGW-w64 win32/rrdcgi.rc win32/rrd_config.h \

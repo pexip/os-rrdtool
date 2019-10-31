@@ -10,5 +10,6 @@ bindings/python/rrdtool.egg-info/top_level.txt
 po/*gmo
 po/rrdtool.pot
 po/stamp-po
+tests/graph1.output.out
 tests/rpn1.out
 tests/rpn1.output.out

@@ -22,7 +22,7 @@ export ABS_TOP_SRCDIR=$(CURDIR)
 export ABS_TOP_BUILDDIR=$(CURDIR)
 
 %:
-	dh $@ --with lua,python2,python3,ruby
+	dh $@ --with lua,python3,ruby
 
 override_dh_auto_configure:
 	dh_auto_configure -- \
@@ -85,8 +85,8 @@ override_dh_auto_install:
 	dh_auto_install --buildsystem=ruby
 
 override_dh_install:
-	# We don't install systemd files yet, because it changes socket location.
-	# This may need a transition with other packages (TODO).
+	# We don't install systemd files yet. (TODO)
+	# Socket location changes, it should use default file.
 	dh_install -X.la -X.txt -X.pod -Xsystemd
 
 override_dh_installdocs:
@@ -96,7 +96,8 @@ override_dh_missing:
 	dh_missing -X.la -X.txt -X.pod -Xsystemd --fail-missing
 
 override_dh_strip:
-	dh_strip --dbg-package=rrdtool-dbg
+	dh_strip --package=python3-rrdtool --dbg-package=python3-rrdtool-dbg
+	dh_strip --no-package=python3-rrdtool --dbgsym-migration='rrdtool-dbg (<< 1.7.2-2~)'
 
 override_dh_gencontrol:
 	tcltk-depends
