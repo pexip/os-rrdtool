@@ -101,9 +101,9 @@
  *
  * 2. Out of context (i.e. right after the '+' or '-' sign) the
  *    meaning of 'm' is guessed from the number it directly follows.
- *    Currently, if the number absolute value is below 25 it is assumed
+ *    Currently, if the number absolute value is below 6 it is assumed
  *    that 'm' means months, otherwise it is treated as minutes.
- *    (e.g., -25m == -25 minutes, while +24m == +24 months)
+ *    (e.g., -6m == -6 minutes, while +5m == +5 months)
  *
  */
 
@@ -467,10 +467,13 @@ static char *expect2(
     ...)
 {
     va_list   ap;
+    char      *msg;
 
     va_start(ap, complain_fmt);
     if (token() != desired) {
-        panic(ve(complain_fmt, ap));
+    	msg = ve(complain_fmt, ap);
+        va_end(ap);
+        panic(msg);
     }
     va_end(ap);
     return TIME_OK;
@@ -688,7 +691,7 @@ static char *day(
     case YESTERDAY:
         ptv->tm.  tm_mday--;
 
-        /* FALLTRHU */
+        /* FALLTHRU */
     case TODAY:        /* force ourselves to stay in today - no further processing */
         token();
         break;

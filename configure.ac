@@ -21,7 +21,7 @@ dnl the released version are
 dnl a.bccc
 dnl the devel versions will be something like
 dnl a.b999yymmddhh
-NUMVERS=1.6000
+NUMVERS=1.7001
 AC_SUBST(NUMVERS)
 
 dnl for the linker to understand which versions the library are compatible with
@@ -32,7 +32,7 @@ dnl - if any functionality was removed do c++,r=0,a=0.
 dnl
 dnl see http://sourceware.org/autobook/autobook/autobook_91.html
 dnl
-LIBVERS=8:0:0
+LIBVERS=10:0:2
 AC_SUBST(LIBVERS)
 
 AC_CANONICAL_TARGET
@@ -220,7 +220,7 @@ CONFIGURE_PART(Checking for Header Files)
 dnl Checks for header files.
 AC_HEADER_STDC
 AC_HEADER_DIRENT
-AC_CHECK_HEADERS(langinfo.h stdint.h inttypes.h libgen.h features.h sys/stat.h sys/types.h fcntl.h fp_class.h malloc.h unistd.h ieeefp.h math.h sys/times.h sys/param.h sys/resource.h signal.h float.h stdio.h stdlib.h errno.h string.h ctype.h grp.h pwd.h)
+AC_CHECK_HEADERS(langinfo.h stdint.h inttypes.h libgen.h features.h sys/stat.h sys/types.h fcntl.h fp_class.h malloc.h unistd.h ieeefp.h math.h sys/times.h sys/param.h sys/resource.h signal.h float.h stdio.h stdlib.h errno.h string.h ctype.h grp.h pwd.h glob.h)
 
 dnl Checks for typedefs, structures, and compiler characteristics.
 AC_C_CONST
@@ -242,8 +242,8 @@ AC_CHECK_FUNC(round, , AC_CHECK_LIB(m, round))
 
 
 dnl add pic flag in any case this makes sure all our code is relocatable
-eval `./libtool --config | grep pic_flag=`
-CFLAGS="$CFLAGS $pic_flag"
+dnl eval `./libtool --config | grep pic_flag=`
+dnl CFLAGS="$CFLAGS $pic_flag"
 
 
 dnl Checks for library functions.
@@ -272,6 +272,10 @@ AC_CHECK_FUNCS(fsync)
 
 dnl check for socket and nsl solaris again ... we need this for the new rrd_daemon stuff
 
+dnl link with ws2_32 (Winsock2 library) in case of MinGW or MinGW-w64 builds
+case "${target}" in
+  *mingw*) LIBS="${LIBS} -lws2_32";;
+esac
 AC_CHECK_FUNCS(socket, [],  AC_CHECK_LIB(socket, socket, [LIBS="${LIBS} -lsocket"; AC_DEFINE(HAVE_SOCKET)],[]))
 AC_CHECK_FUNCS(getaddrinfo, [],  AC_CHECK_LIB(nsl, getaddrinfo, [LIBS="${LIBS} -lnsl"; AC_DEFINE(HAVE_GETADDRINFO)],[]))
 AC_CHECK_FUNCS(sigwaitinfo, [],  AC_CHECK_LIB(rt, sigwaitinfo, [LIBS="${LIBS} -lrt"; AC_DEFINE(HAVE_SIGWAITINFO)],[]))
@@ -433,7 +437,7 @@ AC_DEFINE(NO_NULL_REALLOC)
 fi
 
 AC_LANG_PUSH(C)
-dnl solaris has some odd defines it needs in order to propperly compile ctime_r
+dnl solaris has some odd defines it needs in order to properly compile ctime_r
 AC_MSG_CHECKING([if ctime_r need special care to act posixly correct])
 AC_LINK_IFELSE(
     [AC_LANG_PROGRAM(
@@ -450,7 +454,10 @@ AC_LINK_IFELSE(
     ],
     [ AC_LINK_IFELSE(
           [AC_LANG_PROGRAM(
-                [[#include <time.h>]],
+                [[#ifdef __MINGW32__
+#include <pthread.h>
+#endif
+#include <time.h>]],
                 [[ctime_r(NULL,NULL)]])],
           [AC_MSG_RESULT(no)],
           [AC_MSG_ERROR([Can't figure how to compile ctime_r])]
@@ -512,11 +519,15 @@ CONFIGURE_PART(Find 3rd-Party Libraries)
 
 have_libdbi=no
 
-AC_ARG_ENABLE(libdbi,AS_HELP_STRING([--disable-libdbi],[do not build in support for libdbi]),[],[
+AC_ARG_ENABLE(libdbi,AS_HELP_STRING([--disable-libdbi],[do not build in support for libdbi]),
+[],
+[enable_libdbi=yes])
+
+AS_IF([test "x$enable_libdbi" != xno], [
     AC_CHECK_HEADER(dbi/dbi.h, [
        AC_CHECK_LIB(dbi, dbi_initialize, [
            AC_DEFINE(HAVE_LIBDBI,[1],[have got libdbi installed])
-           LIBS="${LIBS} -ldbi -ldl"
+           LIBS="${LIBS} -ldbi"
            have_libdbi=yes
        ])
     ])
@@ -526,7 +537,11 @@ AM_CONDITIONAL(BUILD_LIBDBI,[test $have_libdbi != no])
 
 have_librados=no
 
-AC_ARG_ENABLE(librados,AS_HELP_STRING([--disable-librados],[do not build in support for librados]),[],[
+AC_ARG_ENABLE(librados,AS_HELP_STRING([--disable-librados],[do not build in support for librados]),
+[],
+[enable_librados=yes])
+
+AS_IF([test "x$enable_librados" != xno], [
     AC_CHECK_HEADER(rados/librados.h, [
         AC_DEFINE(HAVE_LIBRADOS,[1],[have got librados installed])
         LIBS="${LIBS} -lrados"
@@ -538,7 +553,11 @@ AM_CONDITIONAL(BUILD_LIBRADOS,[test $have_librados != no])
 
 have_libwrap=no
 
-AC_ARG_ENABLE(libwrap, AS_HELP_STRING([--disable-libwrap], [do not build in support for libwrap (tcp wrapper)]),[],[
+AC_ARG_ENABLE(libwrap, AS_HELP_STRING([--disable-libwrap], [do not build in support for libwrap (tcp wrapper)]),
+[],
+[enable_libwrap=yes])
+
+AS_IF([test "x$enable_libwrap" != xno], [
     AC_CHECK_HEADER(tcpd.h,[
         AC_CHECK_FUNCS(hosts_access, [
             AC_DEFINE(HAVE_LIBWRAP,[1],[have got libwrap installed])
@@ -562,6 +581,16 @@ AM_CONDITIONAL(BUILD_RRDGRAPH,[test $enable_rrd_graph != no])
 AM_CONDITIONAL(BUILD_RRDRESTORE,[test $enable_rrd_restore != no])
 
 EX_CHECK_ALL(glib-2.0,   glib_check_version,            glib.h,                 glib-2.0,    2.28.7, ftp://ftp.gtk.org/pub/glib/2.28/, "")
+
+AC_CACHE_CHECK([whether we need to include gthreads for g_thread_init],
+    [ac_cv_glibc_g_thread_init],
+    [AC_TRY_COMPILE([#include <glib.h>],
+                    [#if !GLIB_CHECK_VERSION(2, 32, 0)
+                     # error "glib needs g_thread_init"
+                     #endif],
+                     [AC_MSG_RESULT(no)],
+                     [EX_CHECK_ALL(gthread-2.0, g_thread_init, glib.h, gthread-2.0, x.x.x, "", "")
+                     AC_MSG_RESULT(yes)])])
 
 AC_CHECK_FUNC(g_regex_new,[
    AC_DEFINE(HAVE_G_REGEX_NEW,[1],[our glib has g_regex_new])
@@ -590,6 +619,7 @@ dnl EX_CHECK_ALL(cairo,      cairo_svg_surface_create,      cairo-svg.h,        
 dnl EX_CHECK_ALL(cairo,      cairo_pdf_surface_create,      cairo-pdf.h,            cairo-pdf,   1.10.2,  http://cairographics.org/releases/, "")
 dnl EX_CHECK_ALL(cairo,      cairo_ps_surface_create,       cairo-ps.h,             cairo-ps,    1.10.2,  http://cairographics.org/releases/, "")
 EX_CHECK_ALL(pangocairo-1.0,  pango_cairo_context_set_font_options,  pango/pango.h,  pangocairo,  1.28.4,    http://ftp.gnome.org/pub/GNOME/sources/pango/1.28, "")
+EX_CHECK_ALL(gobject-2.0,     g_object_unref,                        glib-object.h,  gobject-2.0, 2.58.1,    https://download.gnome.org/sources/glib/2.58/, "")
 
 AC_CHECK_FUNCS(pango_font_map_create_context)
 fi
@@ -969,6 +999,21 @@ if test -z "$RRDDOCDIR"; then
 
 fi
 
+# Check for MinGW-w64 build and pass to automake
+build_mingw_w64=no
+AC_MSG_CHECKING([for MinGW-w64 build])
+case "$host" in
+    *w64-mingw32*)
+        AC_MSG_RESULT([yes])
+        build_mingw_w64=yes
+    ;;
+    *)
+        AC_MSG_RESULT([no])
+    ;;
+esac
+# Pass the conditional to automake
+AM_CONDITIONAL([MINGW_W64], [test "$build_mingw_w64" = "yes"])
+
 # systemd check
 PKG_PROG_PKG_CONFIG
 AC_ARG_WITH([systemdsystemunitdir],
@@ -995,6 +1040,7 @@ AC_CONFIG_FILES([examples/rrdcached/Makefile])
 AC_CONFIG_FILES([etc/rrdcached-default-lsb])
 AC_CONFIG_FILES([tests/Makefile])
 AC_CONFIG_FILES([doc/Makefile])
+AC_CONFIG_FILES([etc/Makefile])
 AC_CONFIG_FILES([po/Makefile.in])
 AC_CONFIG_FILES([src/Makefile])
 AC_CONFIG_FILES([src/librrd.pc])
@@ -1047,6 +1093,7 @@ if test "$lua_need_compat51" = "1"; then
 echo "   Lua Lua-modules dir: $LUA_INSTALL_LMOD"
 fi
 fi
+echo "      Systemd unit dir: $with_systemdsystemunitdir"
 echo "    Build Tcl Bindings: $enable_tcl"
 echo " Build Python Bindings: $enable_python"
 echo "        Build examples: $enable_examples"
@@ -1063,6 +1110,10 @@ echo "             Libraries: $ALL_LIBS"
 echo
 echo "Type 'make' to compile the software and use 'make install' to "
 echo "install everything to: $prefix."
+if test "x$with_systemdsystemunitdir" != xno; then
+echo
+echo "Type 'make etc-install' to install systemd support for rrdcached"
+fi
 echo
 echo "       ... that wishlist is NO JOKE. If you find RRDtool useful"
 echo "make me happy. Go to http://tobi.oetiker.ch/wish and"

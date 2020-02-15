@@ -23,12 +23,14 @@
 #include <libxml/xmlreader.h>
 #include <locale.h>
 
-#ifndef WIN32
+#ifndef _WIN32
 #	include <unistd.h>     /* for off_t */
 #else
+#ifndef __MINGW32__     /* MinGW-w64 has ssize_t and off_t */
 	typedef size_t ssize_t;
 	typedef long off_t;
-#endif 
+#endif
+#endif
 
 #include <fcntl.h>
 #if defined(_WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)
@@ -813,7 +815,7 @@ static int parse_tag_rra_cf(
     if (status != 0)
         return status;
 
-    status = cf_conv(rra_def->cf_nam);
+    status = rrd_cf_conv(rra_def->cf_nam);
     if (status == -1) {
         rrd_set_error("parse_tag_rra_cf: Unknown consolidation function: %s",
                       rra_def->cf_nam);

@@ -5,6 +5,10 @@
  * rrd_lastupdate  Get the last datum entered for each DS
  *****************************************************************************/
 
+#ifdef __MINGW64__
+#define __USE_MINGW_ANSI_STDIO 1    /* for %10llu */
+#endif
+
 #include "rrd_tool.h"
 #include "rrd_rpncalc.h"
 #include "rrd_client.h"
@@ -29,8 +33,9 @@ int rrd_lastupdate (int argc, char **argv)
     while ((opt = optparse_long(&options, longopts, NULL)) != -1) {
         switch (opt) {
         case 'd':
-            if (opt_daemon != NULL)
+            if (opt_daemon != NULL) {
                     free (opt_daemon);
+            }
             opt_daemon = strdup(options.optarg);
             if (opt_daemon == NULL)
             {
@@ -41,6 +46,9 @@ int rrd_lastupdate (int argc, char **argv)
 
         case '?':
             rrd_set_error("%s", options.errmsg);
+            if (opt_daemon != NULL) {
+            	free(opt_daemon);
+            }
             return -1;
         }
     }                   /* while (opt!=-1) */
@@ -48,11 +56,16 @@ int rrd_lastupdate (int argc, char **argv)
     if ((options.argc - options.optind) != 1) {
         rrd_set_error ("Usage: rrdtool %s [--daemon|-d <addr>] <file>",
                 options.argv[0]);
+        if (opt_daemon != NULL) {
+            free(opt_daemon);
+        }
         return (-1);
     }
 
     status = rrdc_flush_if_daemon(opt_daemon, options.argv[options.optind]);
-    if (opt_daemon) free (opt_daemon);
+    if (opt_daemon != NULL) {
+    	free (opt_daemon);
+    }
     if (status) return (-1);
 
     status = rrd_lastupdate_r(options.argv[options.optind],
@@ -64,7 +77,11 @@ int rrd_lastupdate (int argc, char **argv)
         printf(" %s", ds_names[i]);
     printf ("\n\n");
 
+#if defined _WIN32 && SIZEOF_TIME_T == 8    /* in case of __MINGW64__, _WIN64 and _MSC_VER >= 1400 (ifndef _USE_32BIT_TIME_T) */
+    printf ("%10llu:", last_update);        /* argument 2 has type 'time_t {aka long long int} */
+#else
     printf ("%10lu:", last_update);
+#endif
     for (i = 0; i < ds_count; i++) {
         printf(" %s", last_ds[i]);
         free(last_ds[i]);
@@ -89,7 +106,7 @@ int rrd_lastupdate_r(const char *filename,
     rrd_file_t *rrd_file;
 
     rrd_init(&rrd);
-    rrd_file = rrd_open(filename, &rrd, RRD_READONLY);
+    rrd_file = rrd_open(filename, &rrd, RRD_READONLY | RRD_LOCK);
     if (rrd_file == NULL) {
         rrd_free(&rrd);
         return (-1);

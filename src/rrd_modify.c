@@ -19,7 +19,7 @@
 
 #include <locale.h>
 #include "rrd_config.h"
-#ifdef WIN32
+#ifdef _WIN32
 #include <stdlib.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -78,8 +78,8 @@ static int sort_candidates(const void *va, const void *vb) {
 }
 
 static int select_for_modify(const rra_def_t *tofill, const rra_def_t *maybe) {
-    enum cf_en cf = cf_conv(tofill->cf_nam);
-    enum cf_en other_cf = cf_conv(maybe->cf_nam);
+    enum cf_en cf = rrd_cf_conv(tofill->cf_nam);
+    enum cf_en other_cf = rrd_cf_conv(maybe->cf_nam);
     return (other_cf == cf ||
 	    (other_cf == CF_AVERAGE /*&& other_rra->pdp_cnt == 1*/));
 }
@@ -121,7 +121,7 @@ candidate_t *find_candidate_rras(const rrd_t *rrd, const rra_def_t *rra, int *cn
 		.rra_index = i,
 		.values = rrd->rrd_value + rrd->stat_head->ds_cnt * total_rows,
 		.rra = rrd->rra_def + i,
-		.rra_cf = cf_conv(rrd->rra_def[i].cf_nam),
+		.rra_cf = rrd_cf_conv(rrd->rra_def[i].cf_nam),
 		.ptr = rrd->rra_ptr + i,
 		.cdp = rrd->cdp_prep + rrd->stat_head->ds_cnt * i,
 		.extra = extra
@@ -417,7 +417,7 @@ static int populate_row(const rrd_t *in_rrd,
 
     if (in_rrd->stat_head->rra_cnt < 1) return 0;
 
-    enum cf_en cf = cf_conv(new_rra->cf_nam);
+    enum cf_en cf = rrd_cf_conv(new_rra->cf_nam);
     switch (cf) {
     case CF_AVERAGE:
     case CF_MINIMUM:
@@ -435,7 +435,8 @@ static int populate_row(const rrd_t *in_rrd,
 
     int i, ri;
     candidate_extra_t junk;
-    
+    junk.l = 0; /* Initialize junk.l to avoid warning C4700 in MSVC */
+
     candidates = find_candidate_rras(in_rrd, new_rra, &candidates_cnt, junk, select_for_modify);
     if (candidates == NULL) {
 	goto done;
@@ -706,7 +707,7 @@ static int stretch_rras(rrd_t *out, int stretch) {
     unsigned int rra_index, ds_index;
     for (rra_index = 0 ; rra_index < out->stat_head->rra_cnt ; rra_index++) {
 	rra_def_t *rra = out->rra_def + rra_index;
-	enum cf_en cf = cf_conv(rra->cf_nam);
+	enum cf_en cf = rrd_cf_conv(rra->cf_nam);
 	
 	cdp_prep_t *cdp_prep_row = out->cdp_prep + rra_index * ds_cnt;
 	for (ds_index = 0 ; ds_index < ds_cnt ; ds_index++) {
@@ -997,10 +998,6 @@ done:
     }
     if (rc != 0) {
 	out = NULL;
-	if (finalout) {
-	    rrd_memory_free(finalout);
-	    free(finalout);
-	}
 	finalout = NULL;
     }
     
@@ -1022,16 +1019,12 @@ static void prepare_CDPs(const rrd_t *in, rrd_t *out,
 
     rra_def_t *rra_def = out->rra_def + curr_rra;
 
-    enum cf_en cf = cf_conv(rra_def->cf_nam);
+    enum cf_en cf = rrd_cf_conv(rra_def->cf_nam);
     int candidates_cnt = 0;
     candidate_t *candidates = NULL;
     candidate_t *chosen_candidate = NULL;
     candidate_extra_t junk;
-    
-    if (candidates) {
-	free(candidates);
-	candidates = NULL;
-    }
+    junk.l = 0;
 
     candidates = find_candidate_rras(in, rra_def, &candidates_cnt, junk, select_for_modify);
 
@@ -1042,7 +1035,7 @@ static void prepare_CDPs(const rrd_t *in, rrd_t *out,
 	    rra_def_t *cand_rra = c->rrd->rra_def + c->rra_index;
 		
 	    // we only accept AVERAGE RRAs or RRAs with pdp_cnt == 1
-	    if (cand_rra->pdp_cnt == 1 || cf_conv(cand_rra->cf_nam) == CF_AVERAGE) {
+	    if (cand_rra->pdp_cnt == 1 || rrd_cf_conv(cand_rra->cf_nam) == CF_AVERAGE) {
 		chosen_candidate = c;
 		break;
 	    }
@@ -1224,7 +1217,8 @@ static int add_rras(const rrd_t *in, rrd_t *out, const int *ds_map,
     }
 
     if (require_version != NULL && atoi(require_version) < atoi(out->stat_head->version)) {
-        strcpy(out->stat_head->version, require_version);
+        strncpy(out->stat_head->version, require_version, 4);
+        out->stat_head->version[4] = '\0';
     }
 
     if (last_rra_cnt < out->stat_head->rra_cnt) {
@@ -1315,7 +1309,7 @@ int handle_modify(const rrd_t *in, const char *outfilename,
     
     for (i = optidx ; i < argc ; i++) {
 	if (strncmp("DEL:", argv[i], 4) == 0 && strlen(argv[i]) > 4) {
-		del = (const char **) realloc(del, (rcnt + 2) * sizeof(char*));
+		del = (const char **) realloc((char **) del, (rcnt + 2) * sizeof(char*));   /* Cast 'del' from 'const char **' to 'char **' to avoid MSVC warning C4090 */
 	    if (del == NULL) {
 		rrd_set_error("out of memory");
 		rc = -1;
@@ -1332,7 +1326,7 @@ int handle_modify(const rrd_t *in, const char *outfilename,
 	    rcnt++;
 	    del[rcnt] = NULL;
 	} else if (strncmp("DS:", argv[i], 3) == 0 && strlen(argv[i]) > 3) {
-		add = (const char **) realloc(add, (acnt + 2) * sizeof(char*));
+		add = (const char **) realloc((char **) add, (acnt + 2) * sizeof(char*));   /* Cast 'add' from 'const char **' to 'char **' to avoid MSVC warning C4090 */
 	    if (add == NULL) {
 		rrd_set_error("out of memory");
 		rc = -1;
@@ -1460,13 +1454,13 @@ done:
 	for (const char **c = del ; *c ; c++) {
 	    free((void*) *c);
 	}
-	free(del);
+	free((char **) del);    /* Cast 'del' from 'const char **' to 'char **' to avoid MSVC warning C4090 */
     } 
     if (add) {
 	for (const char **c = add ; *c ; c++) {
 	    free((void*) *c);
 	}
-	free(add);
+	free((char **) add);    /* Cast 'add' from 'const char **' to 'char **' to avoid MSVC warning C4090 */
     }
     if (rra_ops) {
 	for (i = 0 ; i < rraopcnt ; i++) {

@@ -21,12 +21,17 @@ EXTRA_DIST = COPYRIGHT CHANGES TODO CONTRIBUTORS THREADS VERSION LICENSE \
              libtool \
              m4/snprintf.m4 \
              etc/rrdcached-default-redhat etc/rrdcached-init-redhat \
-             win32/README win32/Makefile.msc
+             win32/build-rrdtool.dot win32/build-rrdtool.pdf win32/build-rrdtool.svg \
+             win32/librrd-4.def win32/librrd-4.rc win32/librrd-4.vcxproj \
+             win32/Makefile.msc win32/README win32/README-MinGW-w64 win32/rrdcgi.rc win32/rrd_config.h \
+             win32/rrd.sln win32/rrdtool.rc win32/rrdtool.sln win32/rrdtool.vcxproj win32/rrdupdate.rc \
+             win32/rrdupdate.sln win32/rrdupdate.vcxproj win32/uac.manifest \
+             win32/asprintf.c win32/asprintf.h win32/dirent.h win32/vasprintf-msvc.c
 
 CLEANFILES = config.cache
 
 # use relaxed rules when building dists
-AUTOMAKE_OPTIONS= foreign 
+AUTOMAKE_OPTIONS= foreign
 
 # where we keep local rules for automake
 ACLOCAL_AMFLAGS=-I m4
@@ -36,11 +41,8 @@ ACLOCAL_M4= $(top_srcdir)/aclocal.m4
 
 #	$(RSYNC) CHANGES archive/$(PACKAGE)-$(VERSION).tar.gz tobi@ipn.caida.org:/ipn/web/Tools/RRDtool/pub/
 
-if HAVE_SYSTEMD
-systemdsystemunit_DATA = \
-	etc/rrdcached.socket \
-	etc/rrdcached.service
-endif
+etc-install:
+	cd etc && $(MAKE) install
 
 site-perl-inst: site-perl-install
 
@@ -69,10 +71,10 @@ clean-local:
 
 
 dist-hook: VERSION
-	$(AM_V_GEN)cd $(distdir) && $(PERL) -i -p -e 's/^\$VERSION.+/\$VERSION='$(NUM_VERS)';/' bindings/perl-*/*.pm
+	$(AM_V_GEN)cd $(distdir) && $(PERL) -i -p -e 's/^\$$VERSION.+/\$$VERSION='$(NUMVERS)';/' bindings/perl-*/*.pm
 	$(AM_V_GEN)cd $(distdir) && $(PERL) -i -p -e 's/RRDtool 1.GIT, Copyright by Tobi Oetiker/RRDtool '$(PACKAGE_VERSION)', Copyright 1997-'`date +%Y`' by Tobi Oetiker/' src/*.h src/*.c
 	$(AM_V_GEN)cd $(distdir) && $(PERL) -i -p -e 's/^Version:.+/Version: '$(PACKAGE_VERSION)'/' rrdtool.spec
 	$(AM_V_GEN)$(PERL) -i -p -e 's/rrdtool-[\.\d]+\d(-[a-z0-9]+)?/rrdtool-'$(PACKAGE_VERSION)'/g' doc/rrdbuild.pod
 	$(AM_V_GEN)(cd doc && $(MAKE)) && cp -p doc/rrdbuild.* $(distdir)/doc
-                
+
 ##END##

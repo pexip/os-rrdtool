@@ -45,13 +45,13 @@ the data source header in the B<RRD>.
 A second application of the B<tune> function is to set or alter parameters
 used by the specialized function B<RRAs> for aberrant behavior detection.
 
-Still another application is to add or remove data sources (DS) or 
-add / remove or alter some aspects of round-robin archives (RRA). These operations 
-are not really done in-place, but rather generate a new RRD file internally and 
-move it over the original file. Data is kept intact during theses operations.
-For even more in-depth modifications you may review the 
-S<B<--source>> and S<B<--template>> options of the B<create> function which  
-allow you to combine multiple RRD files into a new one and which is even more clever 
+Still another application is to add or remove data sources (DS) or
+add / remove or alter some aspects of round-robin archives (RRA). These operations
+are not really done in-place, but rather generate a new RRD file internally and
+move it over the original file. Data is kept intact during these operations.
+For even more in-depth modifications you may review the
+S<B<--source>> and S<B<--template>> options of the B<create> function which
+allow you to combine multiple RRD files into a new one and which is even more clever
 in what data it is able to keep or "regenerate".
 
 =over 8
@@ -155,8 +155,8 @@ coefficients to unknown. For the DEVSEASONAL B<RRA>, it sets all seasonal
 deviation coefficients to unknown. For the FAILURES B<RRA>, it erases the
 violation history. Note that reset does not erase past predictions
 (the values of the HWPREDICT or MHWPREDICT B<RRA>), predicted deviations (the
-values of the DEVPREDICT B<RRA>), or failure history (the values of the 
-FAILURES B<RRA>).  This option will function even if not all the listed 
+values of the DEVPREDICT B<RRA>), or failure history (the values of the
+FAILURES B<RRA>).  This option will function even if not all the listed
 B<RRAs> are present.
 
 Due to the implementation of this option, there is an indirect impact on
@@ -181,11 +181,11 @@ TODO: add proper documentation
 
 =item B<--daemon>|B<-D> I<address>
 
-B<NOTE>: Because the B<-d> (small letter 'd') option was already taken, this 
-function (unlike most other) uses the capital letter 'D' for the one-letter 
+B<NOTE>: Because the B<-d> (small letter 'd') option was already taken, this
+function (unlike most other) uses the capital letter 'D' for the one-letter
 option to name the cache daemon.
 
-If given, B<RRDTool> will try to connect to the caching daemon
+If given, B<RRDtool> will try to connect to the caching daemon
 L<rrdcached> at I<address> and will fail if the connection cannot be
 established. If the connection is successfully established the data
 for the I<filename> will be flushed before performing the
@@ -193,12 +193,12 @@ copy/modify operation. Afterwards the I<filename> will be
 forgotten by the cache daemon, so that the next access using the
 caching daemon will read the proper structure.
 
-This sequence of operations is designed to achieve a consistent overall 
+This sequence of operations is designed to achieve a consistent overall
 result with respect to
-RRD internal file consistency when using one of the B<DS> or B<RRA> changing 
+RRD internal file consistency when using one of the B<DS> or B<RRA> changing
 operations (that is: the resulting file should always be a valid RRD file,
 regardless of concurrent updates through the caching daemon).
-Regarding data consistency such guarantees are not made: Without external 
+Regarding data consistency such guarantees are not made: Without external
 synchronization concurrent updates may be lost.
 
 For a list of accepted formats, see the B<-l> option in the L<rrdcached> manual.
@@ -206,18 +206,18 @@ For a list of accepted formats, see the B<-l> option in the L<rrdcached> manual.
 =item B<DEL:>I<ds-name>
 
 Every data source named with a DEL specification will be removed.
-The resulting RRD will miss both the definition and the data for that 
+The resulting RRD will miss both the definition and the data for that
 data source. Multiple DEL specifications are permitted.
 
 =item B<DS:>I<ds-spec>
 
 For every such data source definition (for the exact syntax see the
-B<create> command), a new data source will be added to the RRD. Multiple DS 
+B<create> command), a new data source will be added to the RRD. Multiple DS
 specifications are permitted.
 
 =item B<DELRRA:>I<index>
 
-Removes the RRA with index I<index>. The index is zero-based, 
+Removes the RRA with index I<index>. The index is zero-based,
 that is the very first RRA has index 0.
 
 =item B<RRA:>I<rra-spec>
@@ -238,7 +238,7 @@ Adds/removes or sets the given number of rows for the RRA with index
 C<rrdtool tune data.rrd -h in:100000 -h out:100000 -h through:100000>
 
 Set the minimum required heartbeat for data sources 'in', 'out'
-and 'through' to 10'000 seconds which is a little over one day in data.rrd.
+and 'through' to 100'000 seconds which is a little over one day in data.rrd.
 This would allow to feed old data from MRTG-2.0 right into
 RRDtool without generating *UNKNOWN* entries.
 

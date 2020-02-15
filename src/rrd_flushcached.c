@@ -1,5 +1,5 @@
 /**
- * RRDTool - src/rrd_flushcached.c
+ * RRDtool - src/rrd_flushcached.c
  * Copyright (C) 2008 Florian octo Forster
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -51,6 +51,9 @@ int rrd_flushcached (int argc, char **argv)
 
             case '?':
                 rrd_set_error("%s", options.errmsg);
+                if (opt_daemon != NULL) {
+                    free(opt_daemon);
+                }
                 return -1;
         }
     } /* while (opt!=-1) */
@@ -59,6 +62,9 @@ int rrd_flushcached (int argc, char **argv)
     {
         rrd_set_error("Usage: rrdtool %s [--daemon|-d <addr>] <file> [<file> ...]",
                       options.argv[0]);
+        if (opt_daemon != NULL) {
+            free(opt_daemon);
+        }
         return -1;
     }
 
@@ -86,14 +92,13 @@ int rrd_flushcached (int argc, char **argv)
             char *error;
             int   remaining;
 
-            error     = strdup(rrd_get_error());
+            error     = rrd_get_error();
             remaining = options.argc - options.optind - 1;
 
             rrd_set_error("Flushing of file \"%s\" failed: %s. Skipping "
                     "remaining %i file%s.", options.argv[i],
-                    ((! error) || (*error == '\0')) ? "unknown error" : error,
+                    (*error == '\0') ? "unknown error" : error,
                     remaining, (remaining == 1) ? "" : "s");
-            free(error);
             break;
         }
     }

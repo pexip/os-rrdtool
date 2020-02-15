@@ -201,7 +201,7 @@
 #undef HAVE_LOCALECONV
 #endif
 
-/* the new functions shall be calld rrd_* */
+/* the new functions shall be called rrd_* */
 
 #define vsnprintf rrd_vsnprintf
 #define snprintf rrd_snprintf
@@ -332,7 +332,7 @@
 #ifdef VA_SHIFT
 #undef VA_SHIFT
 #endif	/* defined(VA_SHIFT) */
-#if HAVE_STDARG_H
+#ifdef HAVE_STDARG_H
 #include <stdarg.h>
 #define VA_START(ap, last) va_start(ap, last)
 #define VA_SHIFT(ap, value, type) /* No-op for ANSI C. */
@@ -580,7 +580,9 @@ static UINTMAX_T cast(LDOUBLE);
 static UINTMAX_T myround(LDOUBLE);
 static LDOUBLE mypow10(int);
 
+#ifndef _WIN32  /* Avoid warning under Windows */
 extern int errno;
+#endif
 
 int
 rpl_vsnprintf(char *str, size_t size, const char *format, va_list args)

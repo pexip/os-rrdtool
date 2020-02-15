@@ -23,7 +23,7 @@ Variable names (I<vname>) must be made up strings of the following characters
 C<A-Z, a-z, 0-9, _, -> and a maximum length of 255 characters.
 
 When picking variable names, make sure you do not choose a name that is
-already taken by an RPN operator. A safe bet it to use lowercase or
+already taken by an RPN operator. A safe bet is to use lowercase or
 mixed case names for variables since operators will always be in uppercase.
 
 =head1 DEF
@@ -112,7 +112,7 @@ B<VDEF> also works on such an array but in a different way.  For
 example, I<VDEF:max=ds0,MAXIMUM> would scan each of the array members
 and store the maximum value.
 
-=head2 When do you use B<VDEF> versus B<CDEF>?  
+=head2 When do you use B<VDEF> versus B<CDEF>?
 
 Use B<CDEF> to transform your data prior to graphing.  In the above
 example, we'd use a B<CDEF> to transform bytes to bits before

@@ -20,18 +20,7 @@
 
 #include "rrd_snprintf.h"
 
-int       rrd_xport(
-    int,
-    char **,
-    int *,
-    time_t *,
-    time_t *,
-    unsigned long *,
-    unsigned long *,
-    char ***,
-    rrd_value_t **);
-
-int       rrd_xport_fn(
+static int rrd_xport_fn(
     image_desc_t *,
     time_t *,
     time_t *,
@@ -48,13 +37,12 @@ typedef struct stringbuffer_t {
   unsigned char* data;
   FILE *file;
 } stringbuffer_t;
-int addToBuffer(stringbuffer_t *,char*,size_t);
-void escapeJSON(char*,size_t);
+static int addToBuffer(stringbuffer_t *,char*,size_t);
+static void escapeJSON(char*,size_t);
 
-int rrd_graph_xport(image_desc_t *);
-int rrd_xport_format_xmljson(int,stringbuffer_t *,image_desc_t*,time_t, time_t, unsigned long, unsigned long, char**, rrd_value_t*);
-int rrd_xport_format_sv(char,stringbuffer_t *,image_desc_t*,time_t, time_t, unsigned long, unsigned long, char**, rrd_value_t*);
-int rrd_xport_format_addprints(int,stringbuffer_t *,image_desc_t *);
+static int rrd_xport_format_xmljson(int,stringbuffer_t *,image_desc_t*,time_t, time_t, unsigned long, unsigned long, char**, rrd_value_t*);
+static int rrd_xport_format_sv(char,stringbuffer_t *,image_desc_t*,time_t, time_t, unsigned long, unsigned long, char**, rrd_value_t*);
+static int rrd_xport_format_addprints(int,stringbuffer_t *,image_desc_t *);
 
 int rrd_xport(
     int argc,
@@ -88,7 +76,8 @@ int rrd_xport(
         {0}
     };
 
-    rrd_graph_init(&im);
+    rrd_thread_init();
+    rrd_graph_init(&im, IMAGE_INIT_NO_CAIRO);
 
     rrd_parsetime("end-24h", &start_tv);
     rrd_parsetime("now", &end_tv);
@@ -217,7 +206,7 @@ int rrd_xport(
 
 
 
-int rrd_xport_fn(
+static int rrd_xport_fn(
     image_desc_t *im,
     time_t *start,
     time_t *end,        /* which time frame do you want ?
@@ -322,14 +311,14 @@ int rrd_xport_fn(
                 return (-1);
             }
 
-            if (im->gdes[i].legend == 0)
+            if (im->gdes[i].legend[0] == '\0')
                 legend_list[j][0] = '\0';
             ++j;
 	}
     }
     *step_list_ptr=0;
     /* find a common step */
-    *step = lcd(step_list);
+    *step = rrd_lcd(step_list);
     /* printf("step: %lu\n",*step); */
     free(step_list);
 
@@ -444,15 +433,17 @@ int rrd_graph_xport(image_desc_t *im) {
   default:
     break;
   }
+
+  /* free legend */
+  for (unsigned long j = 0; j < col_cnt; j++) {
+    free(legend_v[j]);
+  }
+  free(legend_v);
+  /* free data */
+  free(data);
+
   /* handle errors */
   if (r) {
-    /* free legend */
-    for (unsigned long j = 0; j < col_cnt; j++) {
-      free(legend_v[j]);
-    }
-    free(legend_v);
-    /* free data */
-    free(data);
     /* free the buffer */
     if (buffer.data) {free(buffer.data);}
     /* close the file */
@@ -475,7 +466,7 @@ int rrd_graph_xport(image_desc_t *im) {
   return print_calc(im);
 }
 
-int addToBuffer(stringbuffer_t * sb,char* data,size_t len) {
+static int addToBuffer(stringbuffer_t * sb,char* data,size_t len) {
   /* if len <= 0  we assume a string and calculate the length ourselves */
   if (len<=0) { len=strlen(data); }
   /* if we have got a file, then take the shortcut */
@@ -526,7 +517,7 @@ int addToBuffer(stringbuffer_t * sb,char* data,size_t len) {
   return 0;
 }
 
-int rrd_xport_format_sv(char sep, stringbuffer_t *buffer,image_desc_t *im,time_t start, time_t end, unsigned long step, unsigned long col_cnt, char **legend_v, rrd_value_t* data) {
+static int rrd_xport_format_sv(char sep, stringbuffer_t *buffer,image_desc_t *im,time_t start, time_t end, unsigned long step, unsigned long col_cnt, char **legend_v, rrd_value_t* data) {
   /* define the time format */
   char* timefmt=NULL;
   if (im->xlab_user.minsec!=-1.0) { timefmt=im->xlab_user.stst; }
@@ -585,7 +576,7 @@ int rrd_xport_format_sv(char sep, stringbuffer_t *buffer,image_desc_t *im,time_t
   return 0;
 }
 
-int rrd_xport_format_xmljson(int flags,stringbuffer_t *buffer,image_desc_t *im,time_t start, time_t end, unsigned long step, unsigned long col_cnt, char **legend_v, rrd_value_t* data) {
+static int rrd_xport_format_xmljson(int flags,stringbuffer_t *buffer,image_desc_t *im,time_t start, time_t end, unsigned long step, unsigned long col_cnt, char **legend_v, rrd_value_t* data) {
 
   /* define some other stuff based on flags */
   int json=0;
@@ -597,7 +588,7 @@ int rrd_xport_format_xmljson(int flags,stringbuffer_t *buffer,image_desc_t *im,t
 
   /* define the time format */
   char* timefmt=NULL;
-  /* unfortunatley we have to do it this way,
+  /* unfortunately we have to do it this way,
      as when no --x-graph argument is given,
      then the xlab_user is not in a clean state (e.g. zero-filled) */
   if (im->xlab_user.minsec!=-1.0) { timefmt=im->xlab_user.stst; }
@@ -639,9 +630,9 @@ int rrd_xport_format_xmljson(int flags,stringbuffer_t *buffer,image_desc_t *im,t
     }
   } else {
     if (json) {
-      snprintf(buf,sizeof(buf),"    \"%s\": %lld,\n",META_START_TAG,(long long int)start);
+      snprintf(buf,sizeof(buf),"    \"%s\": %lld,\n",META_START_TAG,(long long int)start+step);
     } else {
-      snprintf(buf,sizeof(buf),"    <%s>%lld</%s>\n",META_START_TAG,(long long int)start,META_START_TAG);
+      snprintf(buf,sizeof(buf),"    <%s>%lld</%s>\n",META_START_TAG,(long long int)start+step,META_START_TAG);
     }
   }
   addToBuffer(buffer,buf,0);
@@ -742,7 +733,7 @@ int rrd_xport_format_xmljson(int flags,stringbuffer_t *buffer,image_desc_t *im,t
   }
   addToBuffer(buffer,buf,0);
   /* iterate over data */
-  for (time_t ti = start; ti < end; ti += step) {
+  for (time_t ti = start+step; ti <= end; ti += step) {
     if (timefmt) {
       struct tm loc;
       localtime_r(&ti,&loc);
@@ -801,7 +792,7 @@ int rrd_xport_format_xmljson(int flags,stringbuffer_t *buffer,image_desc_t *im,t
       ptr++;
     }
     if (json){
-      addToBuffer(buffer,(ti < end-(time_t)step ? " ],\n" : " ]\n"),0);
+      addToBuffer(buffer,(ti <= end-(time_t)step ? " ],\n" : " ]\n"),0);
     }
     else {
       snprintf(buf,sizeof(buf),"</%s>\n", DATA_ROW_TAG);
@@ -827,7 +818,7 @@ int rrd_xport_format_xmljson(int flags,stringbuffer_t *buffer,image_desc_t *im,t
   return 0;
 }
 
-void escapeJSON(char* txt,size_t len) {
+static void escapeJSON(char* txt,size_t len) {
   char *tmp=(char*)malloc(len+2);
   size_t l=strlen(txt);
   size_t pos=0;
@@ -852,7 +843,7 @@ void escapeJSON(char* txt,size_t len) {
   free(tmp);
 }
 
-int rrd_xport_format_addprints(int flags,stringbuffer_t *buffer,image_desc_t *im) {
+static int rrd_xport_format_addprints(int flags,stringbuffer_t *buffer,image_desc_t *im) {
   /* initialize buffer */
   stringbuffer_t prints={1024,0,NULL,NULL};
   stringbuffer_t rules={1024,0,NULL,NULL};
@@ -862,6 +853,9 @@ int rrd_xport_format_addprints(int flags,stringbuffer_t *buffer,image_desc_t *im
   char* val;
   char* timefmt=NULL;
   if (im->xlab_user.minsec!=-1.0) { timefmt=im->xlab_user.stst; }
+
+  /* avoid calling escapeJSON() with garbage */
+  memset(dbuf, 0, sizeof(dbuf));
 
   /* define some other stuff based on flags */
   int json=0;

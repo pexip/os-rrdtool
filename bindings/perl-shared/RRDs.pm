@@ -64,7 +64,7 @@ explanation on how to specify time.
 
 =head2 Error Handling
 
-The RRD functions will not abort your program even when they can not make
+The RRD functions will not abort your program even when they cannot make
 sense out of the arguments you fed them.
 
 The function RRDs::error should be called to get the error status
@@ -104,7 +104,7 @@ the values of the properties.
 B<RRDs::graphv> takes the same parameters as B<RRDs::graph> but it returns a
 pointer to hash. The hash returned contains meta information about the
 graph. Like its size as well as the position of the graph area on the image.
-When calling with and empty filename than the contents of the graph will be
+When calling with '-' as the filename then the contents of the graph will be
 returned in the hash as well (key 'image').
 
 B<RRDs::updatev> also returns a pointer to hash. The keys of the hash
@@ -114,7 +114,7 @@ current update call. The hash values are CDP values.
 
 B<RRDs::fetch> is the most complex of
 the pack regarding return values. There are 4 values. Two normal
-integers, a pointer to an array and a pointer to a array of pointers.
+integers, a pointer to an array and a pointer to an array of pointers.
 
   my ($start,$step,$names,$data) = RRDs::fetch ... 
   print "Start:       ", scalar localtime($start), " ($start)\n";
@@ -156,7 +156,7 @@ export their data from a database and then load it into an rrd file just to
 be able to call rrdgraph on it. Using a custom callback, you can supply your own
 code for handling the data requests from graph, xport and fetch.
 
-Todo this, you have to first write a fetch function in perl, and then register
+To do this, you have to first write a fetch function in perl, and then register
 this function using C<RRDs::fetch_register_callback>.
 
 Finally you can use the pseudo path name B<cb//>[I<filename>] to tell
@@ -190,7 +190,7 @@ The callback function must look like this:
 =head1 NOTE
 
 If you are manipulating the TZ variable you should also call the POSIX
-function L<tzset(3)> to initialize all internal state of the library for properly
+function L<tzset(3)> to initialize all internal states of the library for properly
 operating in the timezone of your choice.
 
  use POSIX qw(tzset);

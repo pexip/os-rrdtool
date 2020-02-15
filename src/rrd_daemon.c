@@ -1,5 +1,5 @@
 /**
- * RRDTool - src/rrd_daemon.c
+ * RRDtool - src/rrd_daemon.c
  * Copyright (C) 2008-2010 Florian octo Forster
  * Copyright (C) 2008,2009 Kevin Brintnall
  *
@@ -73,7 +73,7 @@
 #  include <stdint.h>
 #endif
 
-#ifndef WIN32
+#ifndef _WIN32
 #include <unistd.h>
 #include <strings.h>
 #include <inttypes.h>
@@ -116,10 +116,8 @@
 
 #define RRDD_LOG(severity, ...) \
   do { \
-    if (stay_foreground) { \
-      fprintf(stderr, __VA_ARGS__); \
-      fprintf(stderr, "\n"); } \
-    syslog ((severity), __VA_ARGS__); \
+    if ((severity) <= opt_log_level) \
+      do_log ((severity), __VA_ARGS__); \
   } while (0)
 
 #if defined(__FreeBSD__) || defined(__APPLE__)
@@ -148,8 +146,9 @@ struct listen_socket_s
   off_t next_cmd;
   off_t next_read;
 
-  char *wbuf;
-  ssize_t wbuf_len;
+  char *wbuf_data;
+  size_t wbuf_size;
+  size_t wbuf_capacity;
 
   uint32_t permissions;
 
@@ -195,6 +194,7 @@ struct cache_item_s
   double last_update_stamp;
 #define CI_FLAGS_IN_TREE  (1<<0)
 #define CI_FLAGS_IN_QUEUE (1<<1)
+#define CI_FLAGS_SUSPENDED (1<<2)
   int flags;
   pthread_cond_t  flushed;
   cache_item_t *prev;
@@ -254,6 +254,9 @@ static pthread_mutex_t connection_threads_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  connection_threads_done = PTHREAD_COND_INITIALIZER;
 static int connection_threads_num = 0;
 
+static FILE *log_fh = NULL;
+static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;
+
 /* Cache stuff */
 static GTree          *cache_tree = NULL;
 static cache_item_t   *cache_queue_head = NULL;
@@ -287,6 +290,8 @@ static pthread_mutex_t rrdfilecreate_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int opt_no_overwrite = 0; /* default for the daemon */
 
+static int opt_log_level = LOG_ERR; /* don't pollute syslog */
+
 /* Journaled updates */
 #define JOURNAL_REPLAY(s) ((s) == NULL)
 #define JOURNAL_BASE "rrd.journal"
@@ -308,6 +313,39 @@ static int handle_request_ping (HANDLER_PROTO);
 /*
  * Functions
  */
+static void do_log (int priority, const char *format, ...)
+{
+  va_list args;
+
+
+  if (stay_foreground)
+  {
+    pthread_mutex_lock(&log_lock);
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+    pthread_mutex_unlock(&log_lock);
+  }
+
+  va_start(args, format);
+  if (log_fh)
+  {
+    char buffer[32];
+    pthread_mutex_lock(&log_lock);
+    time_t now = time(NULL);
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", gmtime(&now));
+    fprintf(log_fh, "%s [%d] ", buffer, priority);
+    vfprintf(log_fh, format, args);
+    fprintf(log_fh, "\n");
+    fflush(log_fh);
+    pthread_mutex_unlock(&log_lock);
+  }
+  else
+    vsyslog(priority, format, args);
+  va_end(args);
+}
+
 static void sig_common (const char *sig) /* {{{ */
 {
   RRDD_LOG(LOG_NOTICE, "caught SIG%s", sig);
@@ -356,8 +394,8 @@ static void* signal_receiver (void UNUSED(*args))
     switch(status)
     {
       case -1:
-        RRDD_LOG(LOG_ERR, "%s: %s\nerrno: %d", __func__, "Signal wait failed.", errno);
-        abort();
+        RRDD_LOG(LOG_NOTICE, "%s: %s (May be OK if occurring while attaching/attached to strace, gdb, etc)\nerrno: %d", __func__, "Signal wait failed.", errno);
+        break;
 
       case SIGINT:
         sig_common("INT");
@@ -485,13 +523,23 @@ static int open_pidfile(char *action, int oflag) /* {{{ */
   }
 
   dir = strdup(dirname(file_copy));
+  if (dir == NULL)
+  {
+    fprintf(stderr, "rrdcached: strdup(): %s\n",
+        rrd_strerror(errno));
+    free(file_copy);
+    return -1;
+  }
   if (rrd_mkdir_p(dir, 0777) != 0)
   {
     fprintf(stderr, "Failed to create pidfile directory '%s': %s\n",
         dir, rrd_strerror(errno));
+    free(dir);
+    free(file_copy);
     return -1;
   }
 
+  free(dir);
   free(file_copy);
 
   fd = open(file, oflag, S_IWUSR|S_IRUSR|S_IRGRP|S_IROTH);
@@ -510,15 +558,24 @@ static int check_pidfile(void)
   char pid_str[16];
 
   pid_fd = open_pidfile("open", O_RDWR);
-  if (pid_fd < 0)
+  if (pid_fd < 0){
+     fprintf(stderr,"FATAL: Fail to create/open PID file \n");
     return pid_fd;
+     }
 
-  if (read(pid_fd, pid_str, sizeof(pid_str)) <= 0)
+  if (read(pid_fd, pid_str, sizeof(pid_str)) <= 0) {
+     fprintf(stderr,"FATAL: Empty PID file exist\n");
+    close(pid_fd);
     return -1;
+  }
 
   pid = atoi(pid_str);
-  if (pid <= 0)
+  if (pid <= 0) {
+     fprintf(stderr,"FATAL: PID file is corrupted\n");
+
+    close(pid_fd);
     return -1;
+  }
 
   /* another running process that we can signal COULD be
    * a competing rrdcached */
@@ -534,7 +591,7 @@ static int check_pidfile(void)
   if (ftruncate(pid_fd, 0) == -1)
   {
     fprintf(stderr,
-            "FATAL: Faild to truncate stale PID file. (pid %d)\n", pid);
+            "FATAL: Failed to truncate stale PID file. (pid %d)\n", pid);
     close(pid_fd);
     return -1;
   }
@@ -618,29 +675,59 @@ static char *next_cmd (listen_socket_t *sock, ssize_t *len) /* {{{ */
   assert(1==0);
 } /* }}} char *next_cmd */
 
-/* add the characters directly to the write buffer */
-static int add_to_wbuf(listen_socket_t *sock, char *str, size_t len) /* {{{ */
+static char *wbuf_data(listen_socket_t *sock) /* {{{ */
 {
-  char *new_buf;
+  assert(sock != NULL);
+  return sock->wbuf_data;
+} /* }}} static char *wbuf_data */
+
+static size_t wbuf_size(listen_socket_t *sock) /* {{{ */
+{
+  assert(sock != NULL);
+  return sock->wbuf_size;
+} /* }}} static size_t wbuf_data */
+
+static void wbuf_free(listen_socket_t *sock) /* {{{ */
+{
+  assert(sock != NULL);
+  free(sock->wbuf_data);
+  sock->wbuf_data = NULL;
+  sock->wbuf_size = 0;
+  sock->wbuf_capacity = 0;
+} /* }}} static void wbuf_free */
+
+/* add the characters directly to the write buffer */
+static int wbuf_append(listen_socket_t *sock, char *str, size_t len) /* {{{ */
+{
+  char *new_data;
+  size_t new_capacity;
 
   assert(sock != NULL);
 
-  new_buf = rrd_realloc(sock->wbuf, sock->wbuf_len + len + 1);
-  if (new_buf == NULL)
+  new_capacity = sock->wbuf_capacity == 0 ? 4096 : sock->wbuf_capacity;
+  while (new_capacity <= sock->wbuf_size + len)
   {
-    RRDD_LOG(LOG_ERR, "add_to_wbuf: realloc failed");
-    return -1;
+    new_capacity *= 2;
   }
 
-  memcpy(new_buf + sock->wbuf_len, str, len);
+  if (new_capacity != sock->wbuf_capacity)
+  {
+    new_data = rrd_realloc(sock->wbuf_data, new_capacity);
+    if (new_data == NULL)
+    {
+      RRDD_LOG(LOG_ERR, "wbuf_append: realloc failed");
+      return -1;
+    }
+    sock->wbuf_data = new_data;
+    sock->wbuf_capacity = new_capacity;
+  }
 
-  sock->wbuf = new_buf;
-  sock->wbuf_len += len;
-
-  *(sock->wbuf + sock->wbuf_len)=0;
+  memcpy(&sock->wbuf_data[sock->wbuf_size], str, len);
+  sock->wbuf_data[sock->wbuf_size + len] = '\0';
+  sock->wbuf_size += len;
 
   return 0;
-} /* }}} static int add_to_wbuf */
+} /* }}} static int wbuf_append */
 
 /* add the text to the "extra" info that's sent after the status line */
 static int add_response_info(listen_socket_t *sock, char *fmt, ...) /* {{{ */
@@ -665,7 +752,7 @@ static int add_response_info(listen_socket_t *sock, char *fmt, ...) /* {{{ */
     return -1;
   }
 
-  return add_to_wbuf(sock, buffer, len);
+  return wbuf_append(sock, buffer, len);
 } /* }}} static int add_response_info */
 
 /* add the binary data to the "extra" info that's sent after the status line */
@@ -687,11 +774,11 @@ static int add_binary_response_info(listen_socket_t *sock,
 	if (res)
 		return res;
 	/* and add it to the buffer */
-	res = add_to_wbuf(sock, (char*) data, records * rsize);
+	res = wbuf_append(sock, (char*) data, records * rsize);
 	if (res)
 		return res;
 	/* and add a newline */
-	return add_to_wbuf(sock, "\n", 1);
+	return wbuf_append(sock, "\n", 1);
 } /* }}} static int add_binary_response_info */
 
 static int count_lines(char *str) /* {{{ */
@@ -719,7 +806,7 @@ static int send_response (listen_socket_t *sock, response_code rc,
   va_list argp;
   char buffer[RRD_CMD_MAX];
   int lines;
-  ssize_t wrote;
+  size_t wrote;
   int rclen, len;
 
   if (JOURNAL_REPLAY(sock)) return rc;
@@ -731,7 +818,7 @@ static int send_response (listen_socket_t *sock, response_code rc,
     lines = sock->batch_cmd;
   }
   else if (rc == RESP_OK)
-    lines = count_lines(sock->wbuf);
+    lines = count_lines(wbuf_data(sock));
   else if (rc == RESP_OK_BIN)
     lines = 1;
   else
@@ -758,7 +845,7 @@ static int send_response (listen_socket_t *sock, response_code rc,
 
   /* append the result to the wbuf, don't write to the user */
   if (sock->batch_start)
-    return add_to_wbuf(sock, buffer, len);
+    return wbuf_append(sock, buffer, len);
 
   /* first write must be complete */
   if (len != write(sock->fd, buffer, len))
@@ -767,12 +854,12 @@ static int send_response (listen_socket_t *sock, response_code rc,
     return -1;
   }
 
-  if (sock->wbuf != NULL && rc == RESP_OK)
+  if (wbuf_data(sock) != NULL && rc == RESP_OK)
   {
     wrote = 0;
-    while (wrote < sock->wbuf_len)
+    while (wrote < wbuf_size(sock))
     {
-      ssize_t wb = write(sock->fd, sock->wbuf + wrote, sock->wbuf_len - wrote);
+      ssize_t wb = write(sock->fd, wbuf_data(sock) + wrote, wbuf_size(sock) - wrote);
       if (wb <= 0)
       {
         RRDD_LOG(LOG_INFO, "send_response: could not write results");
@@ -782,8 +869,7 @@ static int send_response (listen_socket_t *sock, response_code rc,
     }
   }
 
-  free(sock->wbuf); sock->wbuf = NULL;
-  sock->wbuf_len = 0;
+  wbuf_free(sock);
 
   return 0;
 } /* }}} */
@@ -929,7 +1015,8 @@ static gboolean tree_callback_flush (gpointer key, gpointer value, /* {{{ */
     return FALSE;
 
   if (ci->values_num > 0
-      && (ci->last_flush_time <= cfd->abs_timeout || state != RUNNING))
+      && (ci->last_flush_time <= cfd->abs_timeout || state != RUNNING)
+      && ((ci->flags & CI_FLAGS_SUSPENDED) == 0))
   {
     enqueue_cache_item (ci, TAIL);
   }
@@ -1211,7 +1298,7 @@ static int check_file_access (const char *file, listen_socket_t *sock) /* {{{ */
   if (*file != '/') return 1;
 
   /* file must be of the format base + "/" + <1+ char filename> */
-  if (strlen(file) < _config_base_dir_len + 2) return 0;
+  if (strlen(file) < _config_base_dir_len + 1) return 0;
   if (strncmp(file, config_base_dir, _config_base_dir_len) != 0) return 0;
   if (*(file + _config_base_dir_len) != '/') return 0;
 
@@ -1251,7 +1338,8 @@ static int flush_file (const char *filename) /* {{{ */
     return (ENOENT);
   }
 
-  if (ci->values_num > 0)
+  if ((ci->values_num > 0)
+      && ((ci->flags & CI_FLAGS_SUSPENDED) == 0))
   {
     /* Enqueue at head */
     enqueue_cache_item (ci, HEAD);
@@ -1388,7 +1476,7 @@ static int handle_request_flushall(HANDLER_PROTO) /* {{{ */
 
 static int handle_request_pending(HANDLER_PROTO) /* {{{ */
 {
-  int status, rc;
+  int status;
   char *file=NULL, *pbuffile;
   cache_item_t *ci;
 
@@ -1397,28 +1485,19 @@ static int handle_request_pending(HANDLER_PROTO) /* {{{ */
     return syntax_error(sock,cmd);
 
   file = get_abs_path(pbuffile);
-  if (file == NULL) {
-    rc = send_response(sock, RESP_ERR, "%s\n", rrd_strerror(ENOMEM));
-    goto done;
-  }
+  if (file == NULL)
+    return send_response(sock, RESP_ERR, "%s\n", rrd_strerror(ENOMEM));
 
   pthread_mutex_lock(&cache_lock);
   ci = g_tree_lookup(cache_tree, file);
-  if (ci == NULL)
-  {
-    pthread_mutex_unlock(&cache_lock);
-    rc = send_response(sock, RESP_ERR, "%s\n", rrd_strerror(ENOENT));
-    goto done;
+  if (ci != NULL) {
+    for (size_t i=0; i < ci->values_num; i++)
+      add_response_info(sock, "%s\n", ci->values[i]);
   }
 
-  for (size_t i=0; i < ci->values_num; i++)
-    add_response_info(sock, "%s\n", ci->values[i]);
-
-  pthread_mutex_unlock(&cache_lock);
-  rc = send_response(sock, RESP_OK, "updates pending\n");
-done:
   free(file);
-  return rc;
+  pthread_mutex_unlock(&cache_lock);
+  return send_response(sock, RESP_OK, "updates pending\n");
 } /* }}} static int handle_request_pending */
 
 static int handle_request_forget(HANDLER_PROTO) /* {{{ */
@@ -1490,8 +1569,10 @@ static int handle_request_update (HANDLER_PROTO) /* {{{ */
   cache_item_t *ci;
 
   /* save it for the journal later */
-  if (!JOURNAL_REPLAY(sock))
+  if (!JOURNAL_REPLAY(sock)) {
     strncpy(orig_buf, buffer, min(RRD_CMD_MAX,buffer_size));
+    orig_buf[min(RRD_CMD_MAX,buffer_size) - 1] = '\0';
+  }
 
   status = buffer_get_field (&buffer, &buffer_size, &pbuffile);
   if (status != 0) {
@@ -1569,6 +1650,37 @@ static int handle_request_update (HANDLER_PROTO) /* {{{ */
       goto done;
     }
 
+    time_t last_update_from_file;
+    rrd_file_t * rrd_file;
+    rrd_t rrd;
+
+    rrd_clear_error();
+    rrd_init(&rrd);
+    rrd_file = rrd_open(file, &rrd, RRD_READONLY | RRD_LOCK);
+    if (!rrd_file)
+    {
+      rrd_free(&rrd);
+      free (ci);
+      RRDD_LOG (LOG_ERR, "handle_request_update: Could not read RRD file.");
+
+      rc = send_response(sock, RESP_ERR, "RRD Error: %s\n", rrd_get_error());
+      goto done;
+    }
+    last_update_from_file = rrd.live_head->last_up;
+    rrd_close(rrd_file);
+    rrd_free(&rrd);
+
+    ci->last_update_stamp = last_update_from_file;
+
+    if(ci->last_update_stamp<1)
+    {
+      free (ci);
+      RRDD_LOG (LOG_ERR, "handle_request_update: Invalid timestamp from RRD file.");
+
+      rc = send_response(sock, RESP_ERR, "Error: rrdcached: Invalid timestamp returned\n");
+      goto done;
+    }
+
     wipe_ci_values(ci, now);
     ci->flags = CI_FLAGS_IN_TREE;
     pthread_cond_init(&ci->flushed, NULL);
@@ -1587,6 +1699,7 @@ static int handle_request_update (HANDLER_PROTO) /* {{{ */
 
     /* state may have changed while we were unlocked */
     if (state == SHUTDOWN) {
+      pthread_mutex_unlock(&cache_lock);
       rc = -1;
       goto done;
     }
@@ -1643,6 +1756,7 @@ static int handle_request_update (HANDLER_PROTO) /* {{{ */
 
   if (((now - ci->last_flush_time) >= config_write_interval)
       && ((ci->flags & CI_FLAGS_IN_QUEUE) == 0)
+      && ((ci->flags & CI_FLAGS_SUSPENDED) == 0)
       && (ci->values_num > 0))
   {
     enqueue_cache_item (ci, TAIL);
@@ -1882,21 +1996,6 @@ static int handle_request_fetch_parse (HANDLER_PROTO,
   return 0;
 }
 
-#define SSTRCAT(buffer,str,buffer_fill) do { \
-    size_t str_len = strlen (str); \
-    if ((buffer_fill + str_len) > sizeof (buffer)) \
-      str_len = sizeof (buffer) - buffer_fill; \
-    if (str_len > 0) { \
-      strncpy (buffer + buffer_fill, str, str_len); \
-      buffer_fill += str_len; \
-      assert (buffer_fill <= sizeof (buffer)); \
-      if (buffer_fill == sizeof (buffer)) \
-        buffer[buffer_fill - 1] = 0; \
-      else \
-        buffer[buffer_fill] = 0; \
-    } \
-  } while (0)
-
 static int handle_request_fetch (HANDLER_PROTO) /* {{{ */
 {
   unsigned long i,j;
@@ -1917,21 +2016,15 @@ static int handle_request_fetch (HANDLER_PROTO) /* {{{ */
   add_response_info (sock, "End: %lu\n", (unsigned long) parsed.end_tm);
   add_response_info (sock, "Step: %lu\n", parsed.step);
 
-  { /* Add list of DS names */
-    char linebuf[1024];
-    size_t linebuf_fill;
-
-    memset (linebuf, 0, sizeof (linebuf));
-    linebuf_fill = 0;
-    for (i = 0; i < parsed.field_cnt; i++)
-    {
-      if (i > 0)
-        SSTRCAT (linebuf, " ", linebuf_fill);
-      SSTRCAT (linebuf, parsed.ds_namv[parsed.field_idx[i]], linebuf_fill);
-    }
-    add_response_info (sock, "DSCount: %lu\n", parsed.field_cnt);
-    add_response_info (sock, "DSName: %s\n", linebuf);
+  /* Add list of DS names */
+  add_response_info (sock, "DSCount: %lu\n", parsed.field_cnt);
+  add_response_info (sock, "DSName: ");
+  for (i = 0; i < parsed.field_cnt; i++)
+  {
+    add_response_info (sock, (i == 0 ? "%s" :" %s"),
+                       parsed.ds_namv[parsed.field_idx[i]]);
   }
+  add_response_info (sock, "\n");
 
   /* Add the actual data */
   assert (parsed.step > 0);
@@ -1939,35 +2032,18 @@ static int handle_request_fetch (HANDLER_PROTO) /* {{{ */
        t <= parsed.end_tm;
        t += parsed.step,j++)
   {
-    char linebuf[1024];
-    size_t linebuf_fill;
-    char tmp[128];
-
     add_response_info (sock, "%10lu:", (unsigned long) t);
-
-    memset (linebuf, 0, sizeof (linebuf));
-    linebuf_fill = 0;
     for (i = 0; i < parsed.field_cnt; i++)
     {
       unsigned int idx = j*parsed.ds_cnt+parsed.field_idx[i];
-      snprintf (tmp, sizeof (tmp), " %0.17e", parsed.data[idx]);
-      tmp[sizeof (tmp) - 1] = 0;
-      SSTRCAT (linebuf, tmp, linebuf_fill);
-      if (linebuf_fill>sizeof(linebuf)*9/10) {
-        add_response_info (sock, linebuf);
-	memset (linebuf, 0, sizeof (linebuf));
-	linebuf_fill = 0;
-      }
+      add_response_info (sock, " %0.17e", parsed.data[idx]);
     }
-    if (linebuf_fill>0) {
-      add_response_info (sock, "%s\n", linebuf);
-    }
+    add_response_info (sock, "\n");
   } /* for (t) */
   free_fetch_parsed(&parsed);
 
   return (send_response (sock, RESP_OK, "Success\n"));
 } /* }}} int handle_request_fetch */
-#undef SSTRCAT
 
 static int handle_request_fetchbin (HANDLER_PROTO) /* {{{ */
 {
@@ -2024,6 +2100,7 @@ static int handle_request_fetchbin (HANDLER_PROTO) /* {{{ */
   }
 
   free_fetch_parsed(&parsed);
+  free(dbuffer);
 
   return (send_response (sock, RESP_OK_BIN, "%i Success\n",
 		  parsed.field_cnt+5));
@@ -2190,7 +2267,7 @@ static int handle_request_last (HANDLER_PROTO) /* {{{ */
   }
   rrd_clear_error();
   rrd_init(&rrd);
-  rrd_file = rrd_open(file,&rrd,RRD_READONLY);
+  rrd_file = rrd_open(file, &rrd, RRD_READONLY | RRD_LOCK);
   if(!rrd_file) {
     rrd_free(&rrd);
     rc = send_response(sock, RESP_ERR, "RRD Error: %s\n", rrd_get_error());
@@ -2221,7 +2298,7 @@ done:
 static int handle_request_create (HANDLER_PROTO) /* {{{ */
 {
   char *file = NULL, *pbuffile;
-  char *file_copy = NULL, *dir, *dir2 = NULL;
+  char *file_copy = NULL, *dir = NULL, *dir2 = NULL;
   char *tok;
   int ac = 0;
   char *av[128];
@@ -2266,10 +2343,13 @@ static int handle_request_create (HANDLER_PROTO) /* {{{ */
         rc = send_response(sock, RESP_ERR,
             "No permission to recursively create: %s\nDid you pass -R to the daemon?\n",
             dir);
+        pthread_mutex_unlock(&rrdfilecreate_lock);
         goto done;
     }
     if (rrd_mkdir_p(dir, 0755) != 0) {
-        rc = send_response(sock, RESP_ERR, "Cannot create: %s\n", dir);
+        rc = send_response(sock, RESP_ERR, "Cannot create %s: %s\n",
+                           dir, strerror(errno));
+        pthread_mutex_unlock(&rrdfilecreate_lock);
         goto done;
     }
   }
@@ -2352,9 +2432,270 @@ done:
   free(file);
   free(sources);
   free(file_copy);
+  if (dir) {
+    free(dir);
+  }
   free(dir2);
   return rc;
 } /* }}} static int handle_request_create  */
+
+static int handle_request_list (HANDLER_PROTO) /* {{{ */
+{
+  char *filename = NULL;
+  char *rec = NULL;
+  int recursive = 0;
+  char *list, *start_ptr, *end_ptr, *ptr;
+  char fullpath[PATH_MAX], current[PATH_MAX], absolute[PATH_MAX];
+  char bwc[PATH_MAX], bwd[PATH_MAX];
+  char *base = &config_base_dir[0];
+  struct stat sc, sd;
+  ssize_t len;
+  int status;
+
+  if (config_base_dir == NULL) {
+    return send_response(sock, RESP_ERR, "No base directory defined\n");
+  }
+
+  /* get 'RECURSIVE' option */
+  status = buffer_get_field(&buffer, &buffer_size, &rec);
+  if (status == 0) {
+    /* as 'RECURSIVE' is optional, the first argument may be the filename */
+    if (rec[0] != '/' && strcmp(rec, "RECURSIVE") != 0) {
+      return syntax_error(sock, cmd);
+    }
+
+    if (rec[0] == '/') {
+      filename = rec;
+
+    } else if (strcmp(rec, "RECURSIVE") == 0) {
+      recursive = 1;
+    }
+  }
+
+  /* Get pathname if not done already */
+  if (!filename) {
+  status = buffer_get_field(&buffer, &buffer_size, &filename);
+
+  if (status != 0)
+    return syntax_error(sock,cmd);
+  }
+
+  /* get full pathname */
+  snprintf(fullpath, PATH_MAX, "%s%s%s",
+	   config_base_dir, (filename[0] == '/') ? "" : "/", filename);
+
+  if (!check_file_access(fullpath, sock)) {
+    return send_response(sock, RESP_ERR, "Cannot read: %s\n", fullpath);
+  }
+
+  /* get real path of config_base_dir in case it's a symlink */
+  if (lstat(config_base_dir, &sd) == -1) {
+    return send_response(sock, RESP_ERR, "stat %s: %s\n",
+    		         config_base_dir, rrd_strerror(errno));
+  }
+
+  if ((sd.st_mode & S_IFMT) == S_IFLNK) {
+    len = readlink(config_base_dir, bwd, sizeof(bwd) - 1);
+    if (len == -1) {
+      return send_response(sock, RESP_ERR, "readlink %s: %s\n",
+      		           config_base_dir, rrd_strerror(errno));
+    }
+    bwd[len] = '\0';
+    base = &bwd[0];
+  }
+
+  list = rrd_list_r(recursive, fullpath);
+
+  if (list == NULL) {
+    /* Empty directory listing */
+    if (errno == 0) {
+      goto out_send_response;
+    }
+
+    return send_response(sock, RESP_ERR,
+                         "List %s: %s\n", fullpath, rrd_strerror(errno));
+  }
+
+  /* Check list items returned by rrd_list_r;
+   * the returned string is newline-separated: '%s\n%s\n...%s\n'
+   */
+  start_ptr = list;
+  end_ptr = list;
+
+  while (*start_ptr != '\0') {
+    end_ptr = strchr(start_ptr, '\n');
+
+    if (end_ptr == NULL) {
+    	end_ptr = start_ptr + strlen(start_ptr);
+  }
+
+    if ((end_ptr - start_ptr + strlen(fullpath) + 1) >= PATH_MAX) {
+      /* Name too long: skip entry */
+      goto loop_next;
+  }
+    strncpy(&current[0], start_ptr, (end_ptr - start_ptr));
+    current[end_ptr - start_ptr] = '\0';
+
+    /* if a single .rrd was asked for, absolute == fullpath  */
+    ptr = strstr(fullpath, ".rrd");
+
+    if (ptr != NULL && strlen(ptr) == 4) {
+      snprintf(&absolute[0], PATH_MAX, "%s", fullpath);
+
+    } else {
+    snprintf(&absolute[0], PATH_MAX, "%s/%s", fullpath, current);
+    }
+
+    if (!check_file_access(absolute, sock)) {
+      /* Cannot access: skip entry */
+      goto loop_next;
+    }
+
+    /* Make sure we aren't following a symlink pointing outside of base_dir */
+    if (lstat(absolute, &sc) == -1) {
+      free(list);
+    return send_response(sock, RESP_ERR,
+      		           "stat %s: %s\n", absolute, rrd_strerror(errno));
+  }
+
+    if ((sc.st_mode & S_IFMT) == S_IFLNK) {
+      len = readlink(absolute, bwc, sizeof(bwc) - 1);
+
+      if (len == -1) {
+      	free(list);
+        return send_response(sock, RESP_ERR, "readlink %s: %s\n",
+        		     absolute, rrd_strerror(errno));
+      }
+      bwc[len] = '\0';
+      strncpy(&absolute[0], bwc, PATH_MAX - 1);
+      absolute[PATH_MAX - 1] = '\0';
+    }
+
+    /* Absolute path MUST be starting with base_dir; if not skip the entry. */
+    if (strlen(absolute) < strlen(base) ||
+        memcmp(absolute, base, strlen(base)) != 0) {
+      goto loop_next;
+  }
+    add_response_info(sock, "%s\n", current);
+
+loop_next:
+    start_ptr = end_ptr + 1;
+
+  }
+
+  free(list);
+
+out_send_response:
+  send_response(sock, RESP_OK, "RRDs\n");
+
+  return (0);
+} /* }}} int handle_request_list */
+
+static cache_item_t *buffer_get_cache_item(listen_socket_t *sock,
+                                           command_t *cmd, char **buffer,
+                                           size_t *buffer_size, int *rc,
+                                           char **file_name)
+{
+  char *pbuffile;
+  cache_item_t *ci;
+  int status;
+
+  /* obtain filename */
+  status = buffer_get_field(buffer, buffer_size, &pbuffile);
+  if (status != 0) {
+    *rc = syntax_error(sock, cmd);
+    return NULL;
+  }
+  /* get full pathname */
+  *file_name = get_abs_path(pbuffile);
+  if (file_name == NULL) {
+    *rc = send_response(sock, RESP_ERR, "%s + %s\n", *file_name, rrd_strerror(ENOMEM));
+    return NULL;
+  }
+
+  ci = g_tree_lookup(cache_tree, *file_name);
+  if (ci == NULL) {
+    *rc = send_response(sock, RESP_ERR, "%s - %s\n", *file_name, rrd_strerror(ENOENT));
+    return NULL;
+  }
+
+  *rc = 0;
+  return ci;
+}
+
+static int handle_request_suspend(HANDLER_PROTO) /* {{{ */
+{
+  char *file_name = NULL;
+  int rc;
+  cache_item_t *ci = buffer_get_cache_item(sock, cmd, &buffer, &buffer_size, &rc, &file_name);
+  if (ci == NULL)
+    rc = -1;
+  else if ((ci->flags & CI_FLAGS_SUSPENDED) == CI_FLAGS_SUSPENDED)
+    rc = send_response(sock, RESP_OK, "%s already suspended\n", file_name);
+  else
+  {
+    ci->flags |= CI_FLAGS_SUSPENDED;
+    rc = send_response(sock, RESP_OK, "%s suspended\n", file_name);
+  }
+  free(file_name);
+  return rc;
+} /* }}} static int handle_request_suspend */
+
+static int handle_request_resume (HANDLER_PROTO) /* {{{ */
+{
+  char *file_name = NULL;
+  int rc;
+  cache_item_t *ci = buffer_get_cache_item(sock, cmd, &buffer, &buffer_size, &rc, &file_name);
+  if (ci == NULL)
+    rc = -1;
+  else if ((ci->flags & CI_FLAGS_SUSPENDED) == 0)
+    rc = send_response(sock, RESP_OK, "%s not suspended\n", file_name);
+  else
+  {
+    ci->flags &= ~CI_FLAGS_SUSPENDED;
+    rc = send_response(sock, RESP_OK, "%s resumed\n", file_name);
+  }
+  free(file_name);
+  return rc;
+} /* }}} static int handle_request_resume */
+
+static gboolean tree_callback_suspend (gpointer UNUSED(key), /* {{{ */
+    gpointer value, gpointer pointer)
+{
+  cache_item_t *ci = (cache_item_t *) value;
+  int *count = (int*) pointer;
+  if ((ci->flags & CI_FLAGS_SUSPENDED) == 0) {
+    ci->flags |= CI_FLAGS_SUSPENDED;
+    *count += 1;
+  }
+  return (FALSE);
+} /* }}} gboolean tree_callback_suspend */
+
+static int handle_request_suspendall(HANDLER_PROTO) /* {{{ */
+{
+  int count = 0;
+  g_tree_foreach (cache_tree, tree_callback_suspend, (gpointer) &count);
+  return send_response(sock, RESP_OK, "%d rrds suspend\n", count);
+} /* }}} static int handle_request_suspendall */
+
+static gboolean tree_callback_resume (gpointer UNUSED(key), /* {{{ */
+    gpointer value, gpointer pointer)
+{
+  cache_item_t *ci = (cache_item_t *) value;
+  int *count = (int*) pointer;
+  if ((ci->flags & CI_FLAGS_SUSPENDED) != 0) {
+    ci->flags &= ~CI_FLAGS_SUSPENDED;
+    *count += 1;
+  }
+  return (FALSE);
+} /* }}} gboolean tree_callback_resume */
+
+static int handle_request_resumeall(HANDLER_PROTO) /* {{{ */
+{
+  int count = 0;
+  g_tree_foreach (cache_tree, tree_callback_resume, (gpointer) &count);
+  return send_response(sock, RESP_OK, "%d rrds resumed\n", count);
+} /* }}} static int handle_request_resumeall */
 
 /* start "BATCH" processing */
 static int batch_start (HANDLER_PROTO) /* {{{ */
@@ -2566,6 +2907,52 @@ static command_t list_of_commands[] = { /* {{{ */
     "The DS and RRA definitions are as for the 'rrdtool create' command.\n"
   },
   {
+    "LIST",
+    handle_request_list,
+    CMD_CONTEXT_CLIENT,
+    "LIST [RECURSIVE] /[<path>]\n",
+    "This command lists the RRD files in the storage base directory (/).\n"
+    "Note that this is the list of RRD files on storage as of the last update.\n"
+    "There may be pending updates in the queue, so a FLUSH may have to be run\n"
+    "beforehand.\n"
+    "When invoked with 'LIST RECURSIVE /<path>' it will behave similarly to\n"
+    "'ls -R' but limited to rrd files (listing all the rrd bases in the subtree\n"
+    " of <path>, skipping empty directories).\n"
+  },
+  {
+    "SUSPEND",
+    handle_request_suspend,
+    CMD_CONTEXT_CLIENT | CMD_CONTEXT_BATCH,
+    "SUSPEND <filename>\n",
+    "The SUSPEND command will suspend writing to an RRD file. While a file is\n"
+    "suspended, all metrics for it are cached in memory until RESUME is called\n"
+    "for that file or RESUMEALL is called.\n"
+  },
+  {
+    "RESUME",
+    handle_request_resume,
+    CMD_CONTEXT_CLIENT | CMD_CONTEXT_BATCH,
+    "RESUME <filename>\n",
+    "The RESUME command will resume writing to an RRD file previously suspended\n"
+    "by SUSPEND or SUSPENDALL.\n"
+  },
+  {
+    "SUSPENDALL",
+    handle_request_suspendall,
+    CMD_CONTEXT_CLIENT | CMD_CONTEXT_BATCH,
+    "SUSPENDALL\n",
+    "The SUSPENDALL command will suspend writing to all RRD files. While a file\n"
+    "is suspended, all metrics for it are cached in memory until RESUME is called\n"
+    "for that file or RESUMEALL is called.\n"
+  },
+  {
+    "RESUMEALL",
+    handle_request_resumeall,
+    CMD_CONTEXT_CLIENT | CMD_CONTEXT_BATCH,
+    "RESUMEALL\n",
+    "The RESUMEALL command will resume writing to all RRD files previously suspended.\n"
+  },
+  {
     "QUIT",
     handle_request_quit,
     CMD_CONTEXT_CLIENT | CMD_CONTEXT_BATCH,
@@ -2681,6 +3068,7 @@ static int handle_request_help (HANDLER_PROTO) /* {{{ */
   int status;
   char *cmd_str;
   char *resp_txt;
+  char tmp[RRD_CMD_MAX];
   command_t *help = NULL;
 
   status = buffer_get_field (&buffer, &buffer_size, &cmd_str);
@@ -2689,8 +3077,6 @@ static int handle_request_help (HANDLER_PROTO) /* {{{ */
 
   if (help && (help->syntax || help->help))
   {
-    char tmp[RRD_CMD_MAX];
-
     snprintf(tmp, sizeof(tmp)-1, "Help for %s\n", help->cmd);
     resp_txt = tmp;
 
@@ -3127,7 +3513,7 @@ static void free_listen_socket(listen_socket_t *sock) /* {{{ */
   assert(sock != NULL);
 
   free(sock->rbuf);  sock->rbuf = NULL;
-  free(sock->wbuf);  sock->wbuf = NULL;
+  wbuf_free(sock);
   free(sock->addr);  sock->addr = NULL;
   free(sock);
 } /* }}} void free_listen_socket */
@@ -3279,20 +3665,21 @@ static int open_listen_socket_unix (const listen_socket_t *sock) /* {{{ */
   }
 
   dir = strdup(dirname(path_copy));
+  free(path_copy);
   if (rrd_mkdir_p(dir, 0777) != 0)
   {
     fprintf(stderr, "Failed to create socket directory '%s': %s\n",
         dir, rrd_strerror(errno));
+    free(dir);
     return (-1);
   }
-
-  free(path_copy);
 
   temp = (listen_socket_t *) rrd_realloc (listen_fds,
       sizeof (listen_fds[0]) * (listen_fds_num + 1));
   if (temp == NULL)
   {
     fprintf (stderr, "rrdcached: open_listen_socket_unix: realloc failed.\n");
+    free(dir);
     return (-1);
   }
   listen_fds = temp;
@@ -3303,6 +3690,7 @@ static int open_listen_socket_unix (const listen_socket_t *sock) /* {{{ */
   {
     fprintf (stderr, "rrdcached: unix socket(2) failed: %s\n",
              rrd_strerror(errno));
+    free(dir);
     return (-1);
   }
 
@@ -3322,6 +3710,7 @@ static int open_listen_socket_unix (const listen_socket_t *sock) /* {{{ */
     fprintf (stderr, "rrdcached: bind(%s) failed: %s.\n",
              path, rrd_strerror(errno));
     close (fd);
+    free(dir);
     return (-1);
   }
 
@@ -3349,6 +3738,7 @@ static int open_listen_socket_unix (const listen_socket_t *sock) /* {{{ */
              path, rrd_strerror(errno));
     close (fd);
     unlink (path);
+    free(dir);
     return (-1);
   }
 
@@ -3357,6 +3747,7 @@ static int open_listen_socket_unix (const listen_socket_t *sock) /* {{{ */
   listen_fds[listen_fds_num].addr = strdup(path);
   listen_fds_num++;
 
+  free(dir);
   return (0);
 } /* }}} int open_listen_socket_unix */
 
@@ -3463,6 +3854,8 @@ static int open_listen_socket_network(const listen_socket_t *sock) /* {{{ */
     if (status != 0) {
       fprintf(stderr, "rrdcached: setsockopt(SO_REUSEADDR) failed: %s\n",
               rrd_strerror(errno));
+      close (fd);
+      freeaddrinfo(ai_res);
       return (-1);
     }
     /* Nagle will cause significant delay in processing requests so
@@ -3471,18 +3864,23 @@ static int open_listen_socket_network(const listen_socket_t *sock) /* {{{ */
     if (status != 0) {
       fprintf(stderr, "rrdcached: setsockopt(TCP_NODELAY) failed: %s\n",
               rrd_strerror(errno));
+      close (fd);
+      freeaddrinfo(ai_res);
       return (-1);
     }
 #ifdef IPV6_V6ONLY
     /* Prevent EADDRINUSE bind errors on dual-stack configurations
      * with IPv4-mapped-on-IPv6 enabled */
-    if (AF_INET6 == ai_ptr->ai_family)
+    if (AF_INET6 == ai_ptr->ai_family) {
       status = setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof(one));
       if (status != 0) {
         fprintf(stderr, "rrdcached: setsockopt(IPV6_V6ONLY) failed: %s\n",
                 rrd_strerror(errno));
+        close (fd);
+        freeaddrinfo(ai_res);
         return (-1);
       }
+    }
 #endif /* IPV6_V6ONLY */
 
     status = bind (fd, ai_ptr->ai_addr, ai_ptr->ai_addrlen);
@@ -3506,6 +3904,7 @@ static int open_listen_socket_network(const listen_socket_t *sock) /* {{{ */
 
     listen_fds[listen_fds_num].fd = fd;
     listen_fds[listen_fds_num].family = ai_ptr->ai_family;
+    listen_fds[listen_fds_num].addr = strdup(sock->addr);
     listen_fds_num++;
   } /* for (ai_ptr) */
 
@@ -3597,11 +3996,13 @@ static void open_listen_sockets_traditional(void) /* {{{ */
 {
  if (config_listen_address_list_len > 0)
   {
-    for (size_t i = 0; i < config_listen_address_list_len; i++)
+    for (size_t i = 0; i < config_listen_address_list_len; i++) {
       open_listen_socket (config_listen_address_list[i]);
+      free_listen_socket (config_listen_address_list[i]);
+    }
 
-    rrd_free_ptrs((void ***) &config_listen_address_list,
-                  &config_listen_address_list_len);
+    free(config_listen_address_list);
+    config_listen_address_list = NULL;
   }
   else
   {
@@ -3714,6 +4115,7 @@ static void *listen_thread_main (void UNUSED(*args)) /* {{{ */
         if (client_sock->addr == NULL)
         {
           RRDD_LOG (LOG_ERR, "listen_thread_main: strdup failed.");
+          free(client_sock);
           continue;
         }
       } // else, the socket is coming from systemd
@@ -3803,9 +4205,11 @@ static int daemonize (void) /* {{{ */
     close (1);
     close (0);
 
-    open ("/dev/null", O_RDWR);
+    if (open ("/dev/null", O_RDWR) == -1) {
+      RRDD_LOG (LOG_ERR, "failed to open /dev/null.\n");
+    }
     if (dup(0) == -1 || dup(0) == -1){
-        RRDD_LOG (LOG_ERR, "faild to run dup.\n");
+        RRDD_LOG (LOG_ERR, "failed to run dup.\n");
     }
   } /* if (!stay_foreground) */
 
@@ -3862,6 +4266,7 @@ static int daemonize (void) /* {{{ */
   /*FALLTHRU*/
 error:
   remove_pidfile();
+  close(pid_fd);
   return -1;
 } /* }}} int daemonize */
 
@@ -3891,6 +4296,8 @@ static int cleanup (void) /* {{{ */
 
   RRDD_LOG(LOG_INFO, "goodbye");
   closelog ();
+  if (log_fh)
+    fclose(log_fh);
 
   remove_pidfile ();
   free(config_pid_file);
@@ -3914,12 +4321,14 @@ static int read_options (int argc, char **argv) /* {{{ */
     {NULL, 'l', OPTPARSE_REQUIRED},
     {NULL, 'm', OPTPARSE_REQUIRED},
     {NULL, 'O', OPTPARSE_NONE},
+    {NULL, 'o', OPTPARSE_REQUIRED},
     {NULL, 'P', OPTPARSE_REQUIRED},
     {NULL, 'p', OPTPARSE_REQUIRED},
     {NULL, 'R', OPTPARSE_NONE},
     {NULL, 's', OPTPARSE_REQUIRED},
     {NULL, 't', OPTPARSE_REQUIRED},
     {NULL, 'U', OPTPARSE_REQUIRED},
+    {NULL, 'V', OPTPARSE_REQUIRED},
     {NULL, 'w', OPTPARSE_REQUIRED},
     {NULL, 'z', OPTPARSE_REQUIRED},
     {0}
@@ -4007,6 +4416,53 @@ static int read_options (int argc, char **argv) /* {{{ */
         fprintf(stderr, "read_options: -U not supported.\n");
         return 5;
 #endif
+
+      case 'V':
+      {
+      	if (!strcmp(options.optarg, "LOG_EMERG")) {
+      		opt_log_level = LOG_EMERG;
+      		break;
+      	}
+
+      	if (!strcmp(options.optarg, "LOG_ALERT")) {
+      		opt_log_level = LOG_ALERT;
+      		break;
+      	}
+
+      	if (!strcmp(options.optarg, "LOG_CRIT")) {
+      		opt_log_level = LOG_CRIT;
+      		break;
+      	}
+
+      	if (!strcmp(options.optarg, "LOG_ERR")) {
+      		opt_log_level = LOG_ERR;
+      		break;
+      	}
+
+      	if (!strcmp(options.optarg, "LOG_WARNING")) {
+      		opt_log_level = LOG_WARNING;
+      		break;
+      	}
+
+      	if (!strcmp(options.optarg, "LOG_NOTICE")) {
+      		opt_log_level = LOG_NOTICE;
+      		break;
+      	}
+
+      	if (!strcmp(options.optarg, "LOG_INFO")) {
+      		opt_log_level = LOG_INFO;
+      		break;
+      	}
+
+      	if (!strcmp(options.optarg, "LOG_DEBUG")) {
+      		opt_log_level = LOG_DEBUG;
+      		break;
+      	}
+
+      	fprintf(stderr, "Unrecognized log level '%s'; falling back to "
+      		"default LOG_ERR.\n", options.optarg);
+      	break;
+      }
 
       case 'L':
       case 'l':
@@ -4259,6 +4715,20 @@ static int read_options (int argc, char **argv) /* {{{ */
       }
       break;
 
+      case 'o':
+      {
+        if (log_fh)
+          fclose(log_fh);
+        log_fh = fopen(options.optarg, "a");
+        if (!log_fh)
+        {
+	  fprintf(stderr, "Failed to open log file '%s': %s\n",
+                  options.optarg, rrd_strerror(errno));
+	    return 6;
+        }
+      }
+      break;
+
       case 'p':
       {
         if (config_pid_file != NULL)
@@ -4345,6 +4815,7 @@ static int read_options (int argc, char **argv) /* {{{ */
                             "sockets\n"
             "  -O            Do not allow CREATE commands to overwrite existing\n"
             "                files, even if asked to.\n"
+            "  -o <file>     Log to given file instead of syslog.\n"
             "  -P <perms>    Sets the permissions to assign to all following "
                             "sockets\n"
             "  -p <file>     Location of the PID-file.\n"
@@ -4354,6 +4825,8 @@ static int read_options (int argc, char **argv) /* {{{ */
                             "for that group)\n"
             "  -t <threads>  Number of write threads.\n"
             "  -U <user>     Unprivileged user account used when running.\n"
+            "  -V <LOGLEVEL> Max syslog level to log with, with LOG_DEBUG being\n"
+            "                the maximum and LOG_EMERG minimum; see syslog.h\n"
             "  -w <seconds>  Interval in which to write data.\n"
             "  -z <delay>    Delay writes up to <delay> seconds to spread load\n"
             "\n"
@@ -4395,6 +4868,7 @@ int main (int argc, char **argv)
 {
   int status;
 
+  rrd_thread_init();
   status = read_options (argc, argv);
   if (status != 0)
   {
