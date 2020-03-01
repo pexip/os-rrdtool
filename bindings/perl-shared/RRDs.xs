@@ -24,7 +24,7 @@ extern "C" {
  */
 #define VERSION_SAVED VERSION
 #undef VERSION
-#ifndef WIN32
+#ifndef _WIN32
 #include "rrd_config.h"
 #endif
 #include "rrd_tool.h"
@@ -95,7 +95,7 @@ extern "C" {
 			hvs(newSVpv(data->value.u_str,0)); \
 			break; \
 		    case RD_I_BLO: \
-			hvs(newSVpv(data->value.u_blo.ptr,data->value.u_blo.size)); \
+			hvs(newSVpv((char *)data->value.u_blo.ptr,data->value.u_blo.size)); \
 			break; \
 		    } \
 		    data = data->next; \
@@ -105,7 +105,7 @@ extern "C" {
 
 /*
  * should not be needed if libc is linked (see ntmake.pl)
-#ifdef WIN32
+#ifdef _WIN32
  #define free free
  #define malloc malloc
  #define realloc realloc
@@ -133,8 +133,8 @@ static int rrd_fetch_cb_wrapper(
     HV *retHV;
     HE *retHE;
     AV *retAV;
-    time_t new_start,new_end;
-    char *cfStr;
+    time_t new_start;
+    char *cfStr = NULL;
     unsigned long i,ii;
     unsigned long rowCount = 0;
     if (!rrd_fetch_cb_svptr){
@@ -159,6 +159,8 @@ static int rrd_fetch_cb_wrapper(
             break;
         case CF_LAST:
             cfStr = "LAST";
+        default:
+            break;
     }
     hv_store_ent(callHV, sv_2mortal(newSVpv("cd",0)),newSVpv(cfStr,0),0);
     hv_store_ent(callHV, sv_2mortal(newSVpv("start",0)),newSVuv(*start),0);
@@ -235,10 +237,16 @@ static int rrd_fetch_cb_wrapper(
         HE* hash_entry;
         hash_entry = hv_iternext(retHV);
         retKey = hv_iterkey(hash_entry,&retKeyLen);
+	if (strlen(retKey) >= DS_NAM_SIZE){
+            rrd_set_error("Key '%s' longer than the allowed maximum of %d byte",retKey,DS_NAM_SIZE-1);
+            goto error_out;
+	}
+
         if ((((*ds_namv)[i]) = (char*)malloc(sizeof(char) * DS_NAM_SIZE)) == NULL) {
             rrd_set_error("malloc fetch ds_namv entry");
             goto error_out_free_ds_namv;
         }
+
         strncpy((*ds_namv)[i], retKey, DS_NAM_SIZE - 1);
         (*ds_namv)[i][DS_NAM_SIZE - 1] = '\0';
         retSV = hv_iterval(retHV,hash_entry);
@@ -403,9 +411,11 @@ rrd_graph(...)
 		free(argv);
 
 		if (rrd_test_error()) {
-			if(calcpr)
+			if(calcpr) {
 			   for(i=0;calcpr[i];i++)
 				rrd_freemem(calcpr[i]);
+                           rrd_freemem(calcpr);
+                        }
 			XSRETURN_UNDEF;
 		}
 		retar=newAV();
@@ -517,7 +527,7 @@ rrd_xport(...)
 	PREINIT:
                 time_t start,end;
                 int xsize;
-		unsigned long step, col_cnt,row_cnt,i,ii;
+		unsigned long step, col_cnt,i,ii;
 		rrd_value_t *data,*ptr;
                 char **argv,**legend_v;
 		AV *retar,*line,*names;
@@ -646,3 +656,57 @@ rrd_flushcached(...)
 		rrdcode(rrd_flushcached);
 	OUTPUT:
 		RETVAL
+
+SV*
+rrd_list(...)
+	PROTOTYPE: @
+	PREINIT:
+                char *data;
+                char *ptr, *end;
+                int i;
+                char **argv;
+		AV *list;
+	PPCODE:
+		argv = (char **) malloc((items+1)*sizeof(char *));
+		argv[0] = "dummy";
+
+		for (i = 0; i < items; i++) {
+		    STRLEN len;
+		    char *handle= SvPV(ST(i),len);
+		    /* actually copy the data to make sure possible modifications
+		       on the argv data does not backfire into perl */
+		    argv[i+1] = (char *) malloc((strlen(handle)+1)*sizeof(char));
+		    strcpy(argv[i+1],handle);
+		}
+
+                rrd_clear_error();
+
+		data = rrd_list(items+1, argv);
+
+                for (i=0; i < items; i++) {
+		    free(argv[i+1]);
+		}
+		free(argv);
+
+                if (rrd_test_error())
+		    XSRETURN_UNDEF;
+
+		list = newAV();
+
+		ptr = data;
+		end = strchr(ptr, '\n');
+
+		while (end) {
+		    *end = '\0';
+		    av_push(list, newSVpv(ptr, 0));
+		    ptr = end + 1;
+
+		    if (strlen(ptr) == 0)
+			    break;
+
+		    end = strchr(ptr, '\n');
+		}
+
+		rrd_freemem(data);
+
+		XPUSHs(sv_2mortal(newRV_noinc((SV*)list)));

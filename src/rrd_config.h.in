@@ -147,6 +147,9 @@
 /* Define to 1 if you have the `get_current_dir_name' function. */
 #undef HAVE_GET_CURRENT_DIR_NAME
 
+/* Define to 1 if you have the <glob.h> header file. */
+#undef HAVE_GLOB_H
+
 /* Define to 1 if you have the <grp.h> header file. */
 #undef HAVE_GRP_H
 
@@ -413,8 +416,7 @@
 /* Define to 1 if you have the `__va_copy' function or macro. */
 #undef HAVE___VA_COPY
 
-/* Define to the sub-directory in which libtool stores uninstalled libraries.
-   */
+/* Define to the sub-directory where libtool stores uninstalled libraries. */
 #undef LT_OBJDIR
 
 /* Name of package */

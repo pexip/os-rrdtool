@@ -91,7 +91,7 @@ void erase_violations(
     char     *violations_array;
 
     /* check that rra_idx is a CF_FAILURES array */
-    if (cf_conv(rrd->rra_def[rra_idx].cf_nam) != CF_FAILURES) {
+    if (rrd_cf_conv(rrd->rra_def[rra_idx].cf_nam) != CF_FAILURES) {
 #ifdef DEBUG
         fprintf(stderr, "erase_violations called for non-FAILURES RRA: %s\n",
                 rrd->rra_def[rra_idx].cf_nam);
@@ -245,13 +245,13 @@ int apply_smoother(
     free(buffers);
     free(working_average);
 
-    if (cf_conv(rrd->rra_def[rra_idx].cf_nam) == CF_SEASONAL) {
+    if (rrd_cf_conv(rrd->rra_def[rra_idx].cf_nam) == CF_SEASONAL) {
         rrd_value_t (
     *init_seasonality) (
     rrd_value_t seasonal_coef,
     rrd_value_t intercept);
 
-        switch (cf_conv(rrd->rra_def[hw_dep_idx(rrd, rra_idx)].cf_nam)) {
+        switch (rrd_cf_conv(rrd->rra_def[hw_dep_idx(rrd, rra_idx)].cf_nam)) {
         case CF_HWPREDICT:
             init_seasonality = hw_additive_init_seasonality;
             break;
@@ -262,6 +262,8 @@ int apply_smoother(
             rrd_set_error("apply smoother: SEASONAL rra doesn't have "
                           "valid dependency: %s",
                           rrd->rra_def[hw_dep_idx(rrd, rra_idx)].cf_nam);
+            free(rrd_values);
+            free(baseline);
             return -1;
         }
 
@@ -315,6 +317,7 @@ int apply_smoother(
         != (ssize_t) (sizeof(rrd_value_t) * row_length * row_count)) {
         rrd_set_error("apply_smoother: write failed to %lu", rra_start);
         free(rrd_values);
+        free(baseline);
         return -1;
     }
 
@@ -347,7 +350,7 @@ void reset_aberrant_coefficients(
     /* loop over the RRAs */
     for (rra_idx = 0; rra_idx < rrd->stat_head->rra_cnt; rra_idx++) {
         cdp_idx = rra_idx * (rrd->stat_head->ds_cnt) + ds_idx;
-        switch (cf_conv(rrd->rra_def[rra_idx].cf_nam)) {
+        switch (rrd_cf_conv(rrd->rra_def[rra_idx].cf_nam)) {
         case CF_HWPREDICT:
         case CF_MHWPREDICT:
             init_hwpredict_cdp(&(rrd->cdp_prep[cdp_idx]));
@@ -460,7 +463,7 @@ int update_aberrant_CF(
         return update_devpredict(rrd, cdp_idx, rra_idx, ds_idx,
                                  CDP_scratch_idx);
     case CF_SEASONAL:
-        switch (cf_conv(rrd->rra_def[hw_dep_idx(rrd, rra_idx)].cf_nam)) {
+        switch (rrd_cf_conv(rrd->rra_def[hw_dep_idx(rrd, rra_idx)].cf_nam)) {
         case CF_HWPREDICT:
             return update_seasonal(rrd, cdp_idx, rra_idx, ds_idx,
                                    CDP_scratch_idx, seasonal_coef,
@@ -473,7 +476,7 @@ int update_aberrant_CF(
             return -1;
         }
     case CF_DEVSEASONAL:
-        switch (cf_conv(rrd->rra_def[hw_dep_idx(rrd, rra_idx)].cf_nam)) {
+        switch (rrd_cf_conv(rrd->rra_def[hw_dep_idx(rrd, rra_idx)].cf_nam)) {
         case CF_HWPREDICT:
             return update_devseasonal(rrd, cdp_idx, rra_idx, ds_idx,
                                       CDP_scratch_idx, seasonal_coef,
@@ -486,7 +489,7 @@ int update_aberrant_CF(
             return -1;
         }
     case CF_FAILURES:
-        switch (cf_conv
+        switch (rrd_cf_conv
                 (rrd->rra_def[hw_dep_idx(rrd, hw_dep_idx(rrd, rra_idx))].
                  cf_nam)) {
         case CF_HWPREDICT:

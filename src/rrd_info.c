@@ -9,13 +9,6 @@
 #include "rrd_client.h"
 #include <stdarg.h>
 
-/* proto */
-rrd_info_t *rrd_info(
-    int,
-    char **);
-rrd_info_t *rrd_info_r(
-    const char *filename);
-
 /* allocate memory for string */
 char     *sprintf_alloc(
     char *fmt,
@@ -104,8 +97,9 @@ rrd_info_t *rrd_info(
     while ((opt = optparse_long(&options, longopts, NULL)) != -1) {
         switch (opt) {
         case 'd':
-            if (opt_daemon != NULL)
+            if (opt_daemon != NULL) {
                 free (opt_daemon);
+            }
             opt_daemon = strdup(options.optarg);
             if (opt_daemon == NULL)
             {
@@ -120,6 +114,9 @@ rrd_info_t *rrd_info(
 
         case '?':
             rrd_set_error("%s", options.errmsg);
+            if (opt_daemon != NULL) {
+            	free (opt_daemon);
+            }
             return NULL;
         }
     } /* while (opt != -1) */
@@ -127,12 +124,20 @@ rrd_info_t *rrd_info(
     if (options.argc - options.optind != 1) {
         rrd_set_error ("Usage: rrdtool %s [--daemon |-d <addr> [--noflush|-F]] <file>",
                 options.argv[0]);
+        if (opt_daemon != NULL) {
+            free (opt_daemon);
+        }
         return NULL;
     }
 
     if (flushfirst) {
         status = rrdc_flush_if_daemon(opt_daemon, options.argv[options.optind]);
-        if (status) return (NULL);
+        if (status) {
+            if (opt_daemon != NULL) {
+            	free (opt_daemon);
+            }
+            return (NULL);
+        }
     }
 
     rrdc_connect (opt_daemon);
@@ -141,7 +146,9 @@ rrd_info_t *rrd_info(
     else
         info = rrd_info_r(options.argv[options.optind]);
 
-    if (opt_daemon) free(opt_daemon);
+    if (opt_daemon != NULL) {
+    	free(opt_daemon);
+    }
     return (info);
 } /* rrd_info_t *rrd_info */
 
@@ -157,11 +164,11 @@ rrd_info_t *rrd_info_r(
     enum dst_en current_ds;
 
     rrd_init(&rrd);
-    rrd_file = rrd_open(filename, &rrd, RRD_READONLY);
+    rrd_file = rrd_open(filename, &rrd, RRD_READONLY | RRD_LOCK);
     if (rrd_file == NULL)
         goto err_free;
 
-    info.u_str = filename;
+    info.u_str = (char *)filename;
     cd = rrd_info_push(NULL, sprintf_alloc("filename"), RD_I_STR, info);
     data = cd;
 
@@ -249,7 +256,7 @@ rrd_info_t *rrd_info_r(
         info.u_str = rrd.rra_def[i].cf_nam;
         cd = rrd_info_push(cd, sprintf_alloc("rra[%d].cf", i), RD_I_STR,
                            info);
-        current_cf = cf_conv(rrd.rra_def[i].cf_nam);
+        current_cf = rrd_cf_conv(rrd.rra_def[i].cf_nam);
 
         info.u_cnt = rrd.rra_def[i].row_cnt;
         cd = rrd_info_push(cd, sprintf_alloc("rra[%d].rows", i), RD_I_CNT,

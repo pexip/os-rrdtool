@@ -23,7 +23,7 @@ typedef struct cgi_s {
 
 /* in arg[0] find tags beginning with arg[1] call arg[2] on them
    and replace by result of arg[2] call */
-int       parse(
+static int parse(
     char **,
     long,
     char *,
@@ -36,107 +36,100 @@ int       parse(
 /**************************************************/
 
 /* return cgi var named arg[0] */
-char     *cgiget(
+static char *cgiget(
     long,
     const char **);
 
 /* return a quoted cgi var named arg[0] */
-char     *cgigetq(
+static char *cgigetq(
     long,
     const char **);
 
 /* return a quoted and sanitized cgi variable */
-char     *cgigetqp(
+static char *cgigetqp(
     long,
     const char **);
 
 /* call rrd_graph and insert appropriate image tag */
-char     *drawgraph(
+static char *drawgraph(
     long,
     const char **);
 
 /* return PRINT functions from last rrd_graph call */
-char     *drawprint(
+static char *drawprint(
     long,
     const char **);
 
 /* pretty-print the <last></last> value for some.rrd via strftime() */
-char     *printtimelast(
+static char *printtimelast(
     long,
     const char **);
 
 /* pretty-print current time */
-char     *printtimenow(
+static char *printtimenow(
     long,
     const char **);
 
 /* set an environment variable */
-char     *rrdsetenv(
+static char *rrdsetenv(
     long,
     const char **);
 
 /* get an environment variable */
-char     *rrdgetenv(
+static char *rrdgetenv(
     long,
     const char **);
 
 /* include the named file at this point */
-char     *includefile(
+static char *includefile(
     long,
     const char **);
 
 /* for how long is the output of the cgi valid ? */
-char     *rrdgoodfor(
+static char *rrdgoodfor(
     long,
     const char **);
 
 /* return rrdcgi version string */
-char     *rrdgetinternal(
+static char *rrdgetinternal(
     long,
     const char **);
 
-char     *rrdstrip(
+static char *rrdstrip(
     char *buf);
-char     *scanargs(
+static char *scanargs(
     char *line,
     int *argc,
     char ***args);
 
 /* format at-time specified times using strftime */
-char     *printstrftime(
+static char *printstrftime(
     long,
     const char **);
 
 /** HTTP protocol needs special format, and GMT time **/
-char     *http_time(
+static char *http_time(
     time_t *);
 
 /* return a pointer to newly allocated copy of this string */
-char     *stralloc(
+static char *stralloc(
     const char *);
 
 /* global variable for rrdcgi */
 s_cgi    *rrdcgiArg;
 
-/* rrdcgiHeader
- * 
- *  Prints a valid CGI Header (Content-type...) etc.
- */
-void      rrdcgiHeader(
-    void);
-
 /* rrdcgiDecodeString
  * decode html escapes
  */
 
-char     *rrdcgiDecodeString(
+static char *rrdcgiDecodeString(
     char *text);
 
 /* rrdcgiDebug
  * 
  *  Set/unsets debugging
  */
-void      rrdcgiDebug(
+static void rrdcgiDebug(
     int level,
     int where);
 
@@ -144,7 +137,7 @@ void      rrdcgiDebug(
  *
  *  Reads in variables set via POST or stdin.
  */
-s_cgi    *rrdcgiInit(
+static s_cgi *rrdcgiInit(
     void);
 
 /* rrdcgiGetValue
@@ -152,30 +145,16 @@ s_cgi    *rrdcgiInit(
  *  Returns the value of the specified variable or NULL if it's empty
  *  or doesn't exist.
  */
-char     *rrdcgiGetValue(
+static char *rrdcgiGetValue(
     s_cgi * parms,
     const char *name);
-
-/* rrdcgiFreeList
- *
- * Frees a list as returned by rrdcgiGetVariables()
- */
-void      rrdcgiFreeList(
-    char **list);
-
-/* rrdcgiFree
- *
- * Frees the internal data structures
- */
-void      rrdcgiFree(
-    s_cgi * parms);
 
 /*  rrdcgiReadVariables()
  *
  *  Read from stdin if no string is provided via CGI.  Variables that
  *  doesn't have a value associated with it doesn't get stored.
  */
-s_var   **rrdcgiReadVariables(
+static s_var **rrdcgiReadVariables(
     void);
 
 
@@ -185,13 +164,13 @@ char     *rrdcgiHeaderString = NULL;
 char     *rrdcgiType = NULL;
 
 /* rrd interface to the variable functions {put,get}var() */
-char     *rrdgetvar(
+static char *rrdgetvar(
     long argc,
     const char **args);
-char     *rrdsetvar(
+static char *rrdsetvar(
     long argc,
     const char **args);
-char     *rrdsetvarconst(
+static char *rrdsetvarconst(
     long argc,
     const char **args);
 
@@ -379,7 +358,7 @@ static void calfree(
 }
 
 /* create freeable version of the string */
-char     *stralloc(
+static char *stralloc(
     const char *str)
 {
     if (!str) {
@@ -418,7 +397,12 @@ static int readfile(
         totalcnt = (ftell(input) + 1) / sizeof(char) - offset;
         if (totalcnt < MEMBLK)
             totalcnt = MEMBLK;  /* sanitize */
-        fseek(input, offset * sizeof(char), SEEK_SET);
+        if (fseek(input, offset * sizeof(char), SEEK_SET) == -1)
+        {
+           rrd_set_error("fseek() failed on %s: %s", file_name, rrd_strerror(errno));
+           fclose(input);
+           return (-1);
+        }
     }
     if (((*buffer) = (char *) malloc((totalcnt + 4) * sizeof(char))) == NULL) {
         perror("Allocate Buffer:");
@@ -514,7 +498,7 @@ int main(
 #endif
 
 
-    /* expand rrd directives in buffer recursivley */
+    /* expand rrd directives in buffer recursively */
     for (i = 0; buffer[i]; i++) {
         if (buffer[i] != '<')
             continue;
@@ -571,7 +555,7 @@ int main(
 /* remove occurrences of .. this is a general measure to make
    paths which came in via cgi do not go UP ... */
 
-char     *rrdsetenv(
+static char *rrdsetenv(
     long argc,
     const char **args)
 {
@@ -594,7 +578,7 @@ char     *rrdsetenv(
 }
 
 /* rrd interface to the variable function putvar() */
-char     *rrdsetvar(
+static char *rrdsetvar(
     long argc,
     const char **args)
 {
@@ -612,7 +596,7 @@ char     *rrdsetvar(
 }
 
 /* rrd interface to the variable function putvar() */
-char     *rrdsetvarconst(
+static char *rrdsetvarconst(
     long argc,
     const char **args)
 {
@@ -629,7 +613,7 @@ char     *rrdsetvarconst(
                     "were defined]");
 }
 
-char     *rrdgetenv(
+static char *rrdgetenv(
     long argc,
     const char **args)
 {
@@ -649,7 +633,7 @@ char     *rrdgetenv(
     }
 }
 
-char     *rrdgetvar(
+static char *rrdgetvar(
     long argc,
     const char **args)
 {
@@ -669,7 +653,7 @@ char     *rrdgetvar(
     }
 }
 
-char     *rrdgoodfor(
+static char *rrdgoodfor(
     long argc,
     const char **args)
 {
@@ -686,7 +670,7 @@ char     *rrdgoodfor(
     return stralloc("");
 }
 
-char     *rrdgetinternal(
+static char *rrdgetinternal(
     long argc,
     const char **args)
 {
@@ -707,7 +691,7 @@ char     *rrdgetinternal(
  * start and end times, because, either might be relative to the other.
  * */
 #define MAX_STRFTIME_SIZE 256
-char     *printstrftime(
+static char *printstrftime(
     long argc,
     const char **args)
 {
@@ -759,7 +743,7 @@ char     *printstrftime(
     }
 }
 
-char     *includefile(
+static char *includefile(
     long argc,
     const char **args)
 {
@@ -770,12 +754,12 @@ char     *includefile(
 
         readfile(filename, &buffer, 0);
         if (rrd_test_error()) {
-            const size_t len = strlen(rrd_get_error()) + DS_NAM_SIZE;
-            char *err = (char *) malloc(len);
-
-            snprintf(err, len, "[ERROR: %s]", rrd_get_error());
+            char err[4096];
+            snprintf(err, sizeof(err), "[ERROR %s]", rrd_get_error());
             rrd_clear_error();
-            return err;
+
+            free(buffer);
+            return stralloc(err);
         } else {
             return buffer;
         }
@@ -785,7 +769,7 @@ char     *includefile(
 }
 
 /* make a copy of buf and replace open/close brackets with '_' */
-char     *rrdstrip(
+static char *rrdstrip(
     char *buf)
 {
     char     *p;
@@ -809,7 +793,7 @@ char     *rrdstrip(
     return buf;
 }
 
-char     *cgigetq(
+static char *cgigetq(
     long argc,
     const char **args)
 {
@@ -853,7 +837,7 @@ char     *cgigetq(
 /* remove occurrences of .. this is a general measure to make
    paths which came in via cgi do not go UP ... */
 
-char     *cgigetqp(
+static char *cgigetqp(
     long argc,
     const char **args)
 {
@@ -881,7 +865,7 @@ char     *cgigetqp(
     d = buf2;
 
     while (*p) {
-        /* prevent mallicious paths from entering the system */
+        /* prevent malicious paths from entering the system */
         if (p[0] == '.' && p[1] == '.') {
             p += 2;
             *d++ = '_';
@@ -904,7 +888,7 @@ char     *cgigetqp(
 }
 
 
-char     *cgiget(
+static char *cgiget(
     long argc,
     const char **args)
 {
@@ -916,7 +900,7 @@ char     *cgiget(
 
 
 
-char     *drawgraph(
+static char *drawgraph(
     long argc,
     const char **args)
 {
@@ -937,17 +921,17 @@ char     *drawgraph(
         return stralloc(calcpr[0]);
     } else {
         if (rrd_test_error()) {
-            const size_t len = strlen(rrd_get_error()) + DS_NAM_SIZE;
-            char *err = (char *) malloc(len);
-            snprintf(err, len, "[ERROR: %s]", rrd_get_error());
+            char err[4096];
+            snprintf(err, sizeof(err), "[ERROR %s]", rrd_get_error());
             rrd_clear_error();
-            return err;
+
+            return stralloc(err);
         }
     }
     return NULL;
 }
 
-char     *drawprint(
+static char *drawprint(
     long argc,
     const char **args)
 {
@@ -962,7 +946,7 @@ char     *drawprint(
     return stralloc("[ERROR: RRD::PRINT argument error]");
 }
 
-char     *printtimelast(
+static char *printtimelast(
     long argc,
     const char **args)
 {
@@ -980,11 +964,12 @@ char     *printtimelast(
 
         last = rrd_last(argc, (char **) args - 1);
         if (rrd_test_error()) {
-            const size_t len = strlen(rrd_get_error()) + DS_NAM_SIZE;
-            char *err = (char *) malloc(len);
-            snprintf(err, len, "[ERROR: %s]", rrd_get_error());
+            char err[4096];
+            snprintf(err, sizeof(err), "[ERROR %s]", rrd_get_error());
             rrd_clear_error();
-            return err;
+
+            free(buf);
+            return stralloc(err);
         }
         tm_last = *localtime(&last);
         strftime(buf, 254, args[1], &tm_last);
@@ -993,7 +978,7 @@ char     *printtimelast(
     return stralloc("[ERROR: expected <RRD::TIME::LAST file.rrd strftime-format>]");
 }
 
-char     *printtimenow(
+static char *printtimenow(
     long argc,
     const char **args)
 {
@@ -1025,7 +1010,7 @@ char     *printtimenow(
  * that contain RRD::x directives. These introduce a small memory leak
  * since we have to stralloc the arguments the way parse() works.
  */
-char     *scanargs(
+static char *scanargs(
     char *line,
     int *argument_count,
     char ***arguments)
@@ -1143,7 +1128,7 @@ char     *scanargs(
         }
 
         /* check if our argument array is still large enough */
-        if (argc == argsz) {
+        if (argc == argsz - 2) {
             /* resize argument array */
             argsz *= 2;
             argv = (char **) rrd_realloc(argv, argsz * sizeof(char *));
@@ -1201,7 +1186,7 @@ char     *scanargs(
  * The result of func is inserted at the current position
  * in the buffer.
  */
-int parse(
+static int parse(
     char **buf,         /* buffer */
     long i,             /* offset in buffer */
     char *tag,          /* tag to handle  */
@@ -1288,7 +1273,7 @@ int parse(
     return (valln > 0 ? valln - 1 : valln);
 }
 
-char     *http_time(
+static char *http_time(
     time_t *now)
 {
     struct tm *tmptime;
@@ -1299,19 +1284,7 @@ char     *http_time(
     return (buf);
 }
 
-void rrdcgiHeader(
-    void)
-{
-    if (rrdcgiType)
-        printf("Content-type: %s\n", rrdcgiType);
-    else
-        printf("Content-type: text/html\n");
-    if (rrdcgiHeaderString)
-        printf("%s", rrdcgiHeaderString);
-    printf("\n");
-}
-
-void rrdcgiDebug(
+static void rrdcgiDebug(
     int level,
     int where)
 {
@@ -1325,7 +1298,7 @@ void rrdcgiDebug(
         rrdcgiDebugStderr = 1;
 }
 
-char     *rrdcgiDecodeString(
+static char *rrdcgiDecodeString(
     char *text)
 {
     char     *cp, *xp;
@@ -1354,12 +1327,32 @@ char     *rrdcgiDecodeString(
     return text;
 }
 
+/* free_result(s_var**, number)
+ *
+ * Clean-up the 'result' variable from rrdcgiReadVariables() properly.
+ * We can safely call free() on result[i]->{name,value} because they are
+ * memset() to 0 after their allocation.
+ */
+static void free_result(s_var **result, int number)
+{
+    int i;
+
+    for(i = 0; i < number; i++) {
+        if (result && result[i]) {
+            free(result[i]->name);
+            free(result[i]->value);
+            free(result[i]);
+        }
+    }
+    free(result);
+}
+
 /*  rrdcgiReadVariables()
  *
  *  Read from stdin if no string is provided via CGI.  Variables that
  *  doesn't have a value associated with it doesn't get stored.
  */
-s_var   **rrdcgiReadVariables(
+static s_var **rrdcgiReadVariables(
     void)
 {
     int       length;
@@ -1379,8 +1372,10 @@ s_var   **rrdcgiReadVariables(
             length = atoi(ip);
             if ((line = (char *) malloc(length + 2)) == NULL)
                 return NULL;
-            if (fgets(line, length + 1, stdin) == NULL)
+            if (fgets(line, length + 1, stdin) == NULL) {
+                free(line);
                 return NULL;
+            }
         } else
             return NULL;
     } else if (cp && !strcmp(cp, "GET")) {
@@ -1405,14 +1400,20 @@ s_var   **rrdcgiReadVariables(
                         return NULL;
                     strncat(line, tmp, tmplen);
                 } else {
+                    /* clean-up the storage allocated in previous iteration */
+                    if (line) {
+                        free(line);
+                    }
+
                     if ((line = strdup(tmp)) == NULL)
                         return NULL;
                 }
             }
             memset(tmp, 0, sizeof(tmp));
         }
-        if (!line)
+        if (!line) {
             return NULL;
+        }
         if (line[strlen(line) - 1] == '&')
             line[strlen(line) - 1] = '\0';
     }
@@ -1449,8 +1450,10 @@ s_var   **rrdcgiReadVariables(
     }
 
     len = (numargs + 1) * sizeof(s_var *);
-    if ((result = (s_var **) malloc(len)) == NULL)
+    if ((result = (s_var **) malloc(len)) == NULL) {
+        free(line);
         return NULL;
+    }
     memset(result, 0, len);
 
     cp = line;
@@ -1479,17 +1482,26 @@ s_var   **rrdcgiReadVariables(
                                        (size_t) (esp - cp))); k++);
 
             if (k == i) {   /* No such variable yet */
-                if ((result[i] = (s_var *) malloc(sizeof(s_var))) == NULL)
+                if ((result[i] = (s_var *) malloc(sizeof(s_var))) == NULL) {
+                    free_result(result, i);
+                    free(line);
                     return NULL;
+                }
                 if ((result[i]->name =
-                     (char *) malloc((esp - cp + 1) * sizeof(char))) == NULL)
+                     (char *) malloc((esp - cp + 1) * sizeof(char))) == NULL) {
+                    free_result(result, i);
+                    free(line);
                     return NULL;
+                }
                 memset(result[i]->name, 0, esp - cp + 1);
                 strncpy(result[i]->name, cp, esp - cp);
                 cp = ++esp;
                 if ((result[i]->value =
-                     (char *) malloc((ip - esp + 1) * sizeof(char))) == NULL)
+                     (char *) malloc((ip - esp + 1) * sizeof(char))) == NULL) {
+                    free_result(result, i);
+                    free(line);
                     return NULL;
+                }
                 memset(result[i]->value, 0, ip - esp + 1);
                 strncpy(result[i]->value, cp, ip - esp);
                 result[i]->value = rrdcgiDecodeString(result[i]->value);
@@ -1505,8 +1517,11 @@ s_var   **rrdcgiReadVariables(
             } else {    /* There is already such a name, suppose a multiple field */
                 cp = ++esp;
                 len = strlen(result[k]->value) + (ip - esp) + 2;
-                if ((sptr = (char *) calloc(len, sizeof(char))) == NULL)
+                if ((sptr = (char *) calloc(len, sizeof(char))) == NULL) {
+                    free_result(result, i);
+                    free(line);
                     return NULL;
+                }
                 snprintf(sptr, len, "%s\n%s", result[k]->value, cp);
                 free(result[k]->value);
                 result[k]->value = rrdcgiDecodeString(sptr);
@@ -1514,6 +1529,8 @@ s_var   **rrdcgiReadVariables(
         }
         cp = ++ip;
     }
+
+    free(line);
     return result;
 }
 
@@ -1522,25 +1539,29 @@ s_var   **rrdcgiReadVariables(
  *  Read from stdin if no string is provided via CGI.  Variables that
  *  doesn't have a value associated with it doesn't get stored.
  */
-s_cgi    *rrdcgiInit(
+static s_cgi *rrdcgiInit(
     void)
 {
     s_cgi    *res;
     s_var   **vars;
 
+    if ((res = (s_cgi *) malloc(sizeof(s_cgi))) == NULL) {
+        return NULL;
+    }
+
     vars = rrdcgiReadVariables();
 
-    if (!vars)
+    if (!vars) {
+    	free(res);
         return NULL;
+    }
 
-    if ((res = (s_cgi *) malloc(sizeof(s_cgi))) == NULL)
-        return NULL;
     res->vars = vars;
 
     return res;
 }
 
-char     *rrdcgiGetValue(
+static char *rrdcgiGetValue(
     s_cgi * parms,
     const char *name)
 {
@@ -1569,41 +1590,3 @@ char     *rrdcgiGetValue(
     return NULL;
 }
 
-void rrdcgiFreeList(
-    char **list)
-{
-    int       i;
-
-    for (i = 0; list[i] != NULL; i++)
-        free(list[i]);
-    free(list);
-}
-
-void rrdcgiFree(
-    s_cgi * parms)
-{
-    int       i;
-
-    if (!parms)
-        return;
-    if (parms->vars) {
-        for (i = 0; parms->vars[i]; i++) {
-            if (parms->vars[i]->name)
-                free(parms->vars[i]->name);
-            if (parms->vars[i]->value)
-                free(parms->vars[i]->value);
-            free(parms->vars[i]);
-        }
-        free(parms->vars);
-    }
-    free(parms);
-
-    if (rrdcgiHeaderString) {
-        free(rrdcgiHeaderString);
-        rrdcgiHeaderString = NULL;
-    }
-    if (rrdcgiType) {
-        free(rrdcgiType);
-        rrdcgiType = NULL;
-    }
-}

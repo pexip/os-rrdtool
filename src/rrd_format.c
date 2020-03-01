@@ -4,7 +4,7 @@
  * rrd_format.c  RRD Database Format helper functions
  *****************************************************************************/
 #include "rrd_tool.h"
-#ifdef WIN32
+#ifdef _WIN32
 #include "stdlib.h"
 #endif
 
@@ -27,7 +27,7 @@ enum dst_en dst_conv(
 }
 
 
-enum cf_en cf_conv(
+enum cf_en rrd_cf_conv(
     const char *string)
 {
 

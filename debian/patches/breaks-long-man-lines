@@ -23,7 +23,7 @@ Index: rrdtool/doc/Makefile.am
 +	$(AM_V_GEN)@POD2MAN@ --release=$(VERSION) --center=rrdtool --section=3 --utf8 $< | sed -e $$'s|\u200B|\\\\:|g' > $@
  
  .1.txt .3.txt:
- 	$(AM_V_GEN)GROFF_NO_SGR=1 @NROFF@ -man -Tlp $< > $@
+ 	$(AM_V_GEN)GROFF_NO_SGR=1 @NROFF@ -man -Tlp -Wbreak $< > $@
 Index: rrdtool/doc/rrdgraph_data.pod
 ===================================================================
 --- rrdtool.orig/doc/rrdgraph_data.pod

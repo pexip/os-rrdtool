@@ -1,0 +1,3 @@
+# ignore changes in hungarian translation: Strings to translate don't match
+# the lastest source.
+extend-diff-ignore = "po/hu\.po"

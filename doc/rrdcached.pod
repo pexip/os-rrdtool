@@ -18,12 +18,14 @@ B<rrdcached>
 [B<-l>E<nbsp>I<address>]
 [B<-m>E<nbsp>I<mode>]
 [B<-O>]
+[B<-o>E<nbsp>I<log_file>]
 [B<-P>E<nbsp>I<permissions>]
 [B<-p>E<nbsp>I<pid_file>]
 [B<-R>]
 [B<-s>E<nbsp>I<group>]
 [B<-t>E<nbsp>I<write_threads>]
 [B<-U>E<nbsp>I<user>]]
+[B<-V>E<nbsp>I<log_level>]
 [B<-w>E<nbsp>I<timeout>]
 [B<-z>E<nbsp>I<delay>]
 
@@ -128,7 +130,7 @@ administrators of I<RRDCacheD> to control the actions accepted from various
 sources.
 
 The arguments given to the B<-P> option is a comma separated list of commands.
-For example, to allow the C<FLUSH> and C<PENDING> commands one could specify:
+For example, to allow one the C<FLUSH> and C<PENDING> commands one could specify:
 
   rrdcached -P FLUSH,PENDING $MORE_ARGUMENTS
 
@@ -156,6 +158,24 @@ be accepted, too.
 =back
 
 Please also read L</"SECURITY CONSIDERATIONS"> below.
+
+=item B<-V> I<log_level>
+
+rrdcached under load can severely flood the logs. This command line option
+specifies the maximum log_level to be used, meaning that a message with
+verbosity I<higher> than log_level is muted (LOG_EMERG being the lowest and
+LOG_DEBUG highest).
+
+Accepted values for "log_level" (lowest to highest verbosity):
+LOG_EMERG, LOG_ALERT, LOG_CRIT, LOG_ERR, LOG_WARNING, LOG_NOTICE, LOG_INFO, LOG_DEBUG
+
+Default log level when this flag is I<NOT> present: B<LOG_ERR>
+
+See also: I<syslog.h>
+
+=item B<-o> I<log_file>
+
+Log to the given file instead of syslog.
 
 =item B<-w> I<timeout>
 
@@ -352,6 +372,10 @@ xport
 
 create
 
+=item *
+
+list
+
 =back
 
 The B<update> command can send values to the daemon instead of writing them to
@@ -492,7 +516,7 @@ accepted commands to those needed by external clients. If, for example,
 external clients want to draw graphs of the cached data, they should only be
 allowed to use the C<FLUSH> command.
 
-Authorization does not work when rrcached is socket-activated by systemd.
+Authorization does not work when rrdcached is socket-activated by systemd.
 
 =head2 Encryption
 
@@ -692,7 +716,7 @@ The information is returned, one item per line, with the format:
 
  I<keyname> I<type> I<value>
 
-=item B<CREATE> I<filename> [-s I<stepsize>] [-b I<begintime>] [-O] I<DSdefinitions> ... I<RRAdefinitions> ...
+=item B<CREATE> I<filename> [-s I<stepsize>] [-b I<begintime>] [-r I<sourcefile> ...] [-t I<templatefile>] [-O] I<DSdefinitions> ... I<RRAdefinitions> ...
 
 This will create the RRD file according to the supplied parameters, provided
 the parameters are valid, and (if the -O option is given or if the rrdcached
@@ -724,6 +748,31 @@ message itself.  The first user command after B<BATCH> is command number one.
     server:  2 Errors
     server:  1 message for command 1
     server:  12 message for command 12
+
+=item B<LIST> [RECURSIVE] I/<path>
+
+This command allows to list directories and rrd databases as seen by the daemon.
+The root "directory" is the base_dir (see '-b dir'). When invoked with 'LIST RECURSIVE /<path>' it will behave similarly to 'ls -R' but limited to rrd files (listing all the rrd bases in the subtree of <path>, skipping empty directories).
+
+=item B<SUSPEND> I<filename>
+
+Suspend writing to an RRD file. While a file is suspended, all metrics for it
+are cached in memory until B<RESUME> is called for that file or B<RESUMEALL> is
+called.
+
+=item B<RESUME> I<filename>
+
+Resume writing to an RRD file previously suspended by B<SUSPEND> or B<SUSPENDALL>.
+
+=item B<SUSPENDALL>
+
+Suspend writing to all RRD files. While a file is suspended, all metrics for it
+are cached in memory until B<RESUME> is called for that file or B<RESUMEALL> is
+called.
+
+=item B<RESUMEALL>
+
+Resume writing to all RRD files previously suspended by B<SUSPEND> or B<SUSPENDALL>.
 
 =item B<QUIT>
 

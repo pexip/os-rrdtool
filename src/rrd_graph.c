@@ -9,7 +9,7 @@
 
 
 
-#ifdef WIN32
+#if defined(_WIN32) && !defined(__MINGW32__)
 #include "strftime.h"
 #endif
 
@@ -37,7 +37,7 @@
 #include "plbasename.h"
 #endif
 
-#if defined(WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)
+#if defined(_WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)
 #include <io.h>
 #include <fcntl.h>
 #endif
@@ -247,13 +247,11 @@ int xtr(
     image_desc_t *im,
     time_t mytime)
 {
-    static double pixie;
-
     if (mytime == 0) {
-        pixie = (double) im->xsize / (double) (im->end - im->start);
+        im->x_pixie = (double) im->xsize / (double) (im->end - im->start);
         return im->xorigin;
     }
-    return (int) ((double) im->xorigin + pixie * (mytime - im->start));
+    return (int) ((double) im->xorigin + im->x_pixie * (mytime - im->start));
 }
 
 /* translate data values into y coordinates */
@@ -261,23 +259,22 @@ double ytr(
     image_desc_t *im,
     double value)
 {
-    static double pixie;
     double    yval;
 
     if (isnan(value)) {
         if (!im->logarithmic)
-            pixie = (double) im->ysize / (im->maxval - im->minval);
+            im->y_pixie = (double) im->ysize / (im->maxval - im->minval);
         else
-            pixie =
+            im->y_pixie =
                 (double) im->ysize / (log10(im->maxval) - log10(im->minval));
         yval = im->yorigin;
     } else if (!im->logarithmic) {
-        yval = im->yorigin - pixie * (value - im->minval);
+        yval = im->yorigin - im->y_pixie * (value - im->minval);
     } else {
         if (value < im->minval) {
             yval = im->yorigin;
         } else {
-            yval = im->yorigin - pixie * (log10(value) - log10(im->minval));
+            yval = im->yorigin - im->y_pixie * (log10(value) - log10(im->minval));
         }
     }
     return yval;
@@ -437,6 +434,7 @@ int im_free(
     }
     free(im->gdes);
 
+    if (im->init_mode == IMAGE_INIT_CAIRO) {
     for (i = 0; i < DIM(text_prop);i++){
         pango_font_description_free(im->text_prop[i].font_desc);
         im->text_prop[i].font_desc = NULL;
@@ -467,6 +465,7 @@ int im_free(
         g_object_unref(im->layout);
     }
     mutex_unlock(im->fontmap_mutex);
+    }
 
 	if (im->ylegend)
 		free(im->ylegend);
@@ -759,7 +758,7 @@ void apply_gridfit(
 
 /* reduce data reimplementation by Alex */
 
-int reduce_data(
+int rrd_reduce_data(
     enum cf_en cf,      /* which consolidation function ? */
     unsigned long cur_step, /* step the data currently is in */
     time_t *start,      /* start, end and step as requested ... */
@@ -974,7 +973,7 @@ int data_fetch(
              * existing connection is re-used. */
             rrdc_connect (rrd_daemon);
 
-            /* If connecting was successfull, use the daemon to query the data.
+            /* If connecting was successful, use the daemon to query the data.
              * If there is no connection, for example because no daemon address
              * was specified, (try to) use the local file directly. */
             if (rrdc_is_connected (rrd_daemon))
@@ -1033,7 +1032,7 @@ int data_fetch(
             im->gdes[i].step = max(im->gdes[i].step,im->step);
             if (ft_step < im->gdes[i].step) {
 
-                if (!reduce_data(im->gdes[i].cf_reduce_set ? im->gdes[i].cf_reduce : im->gdes[i].cf,
+                if (!rrd_reduce_data(im->gdes[i].cf_reduce_set ? im->gdes[i].cf_reduce : im->gdes[i].cf,
                             ft_step,
                             &im->gdes[i].start,
                             &im->gdes[i].end,
@@ -1072,7 +1071,7 @@ int data_fetch(
 
 /* find the greatest common divisor for all the numbers
    in the 0 terminated num array */
-long lcd(
+long rrd_lcd(
     long *num)
 {
     long      rest;
@@ -1253,7 +1252,7 @@ int data_calc(
             /* Now find the resulting step.  All steps in all
              * used RRAs have to be visited
              */
-            im->gdes[gdi].step = lcd(steparray);
+            im->gdes[gdi].step = rrd_lcd(steparray);
             free(steparray);
 
             if ((im->gdes[gdi].data = (rrd_value_t*)malloc(((im->gdes[gdi].end -
@@ -1428,7 +1427,7 @@ int data_proc(
         }
     }
 
-    /* if min or max have not been asigned a value this is because
+    /* if min or max have not been assigned a value this is because
        there was no data in the graph ... this is not good ...
        lets set these to dummy values then ... */
 
@@ -1460,7 +1459,24 @@ int data_proc(
             im->minval = minval;
     }
     if (isnan(im->maxval)
-        || (!im->rigid && im->maxval < maxval)
+        || ((!im->rigid) && im->maxval < maxval)
+        ) {
+        if (im->logarithmic)
+            im->maxval = maxval * 2.0;
+        else
+            im->maxval = maxval;
+    }
+
+    if (!isnan(im->minval)
+        && (im->rigid && im->allow_shrink && im->minval < minval)
+        ) {
+        if (im->logarithmic)
+            im->minval = minval / 2.0;
+        else
+            im->minval = minval;
+    }
+    if (!isnan(im->maxval)
+        && (im->rigid && im->allow_shrink && im->maxval > maxval)
         ) {
         if (im->logarithmic)
             im->maxval = maxval * 2.0;
@@ -1488,6 +1504,7 @@ int data_proc(
             im->maxval = 1.0;
         }
     }
+
     return 0;
 }
 
@@ -1913,7 +1930,7 @@ int print_calc(
                             prline.u_str = sprintf_alloc("%.0f", printval);
                         } else {
                             const char *fmt;
-                            if (im->gdes[i].format == NULL || im->gdes[i].format[0] == '\0')
+                            if (im->gdes[i].format[0] == '\0')
                                 fmt = default_timestamp_fmt;
                             else
                                 fmt = im->gdes[i].format;
@@ -1931,7 +1948,7 @@ int print_calc(
                             prline.u_str = sprintf_alloc("%f", printval);
                         } else {
                             const char *fmt;
-                            if (im->gdes[i].format == NULL || im->gdes[i].format[0] == '\0')
+                            if (im->gdes[i].format[0] == '\0')
                                 fmt = default_duration_fmt;
                             else
                                 fmt = im->gdes[i].format;
@@ -1980,7 +1997,7 @@ int print_calc(
                             snprintf(im->gdes[i].legend, FMT_LEG_LEN, "%.0f", printval);
                         } else {
                             const char *fmt;
-                            if (im->gdes[i].format == NULL || im->gdes[i].format[0] == '\0')
+                            if (im->gdes[i].format[0] == '\0')
                                 fmt = default_timestamp_fmt;
                             else
                                 fmt = im->gdes[i].format;
@@ -1993,7 +2010,7 @@ int print_calc(
                             snprintf(im->gdes[i].legend, FMT_LEG_LEN, "%f", printval);
                         } else {
                             const char *fmt;
-                            if (im->gdes[i].format == NULL || im->gdes[i].format[0] == '\0')
+                            if (im->gdes[i].format[0] == '\0')
                                 fmt = default_duration_fmt;
                             else
                                 fmt = im->gdes[i].format;
@@ -2090,7 +2107,8 @@ int leg_place(
         for (i = 0; i < im->gdes_c; i++) {
             char      prt_fctn; /*special printfunctions */
             if(calc_width){
-                strncpy(saved_legend, im->gdes[i].legend, sizeof saved_legend);
+                strncpy(saved_legend, im->gdes[i].legend, sizeof saved_legend - 1);
+                saved_legend[sizeof saved_legend - 1] = '\0';
             }
 
             fill_last = fill;
@@ -2256,7 +2274,8 @@ int leg_place(
             }
 
             if(calc_width){
-                strncpy(im->gdes[i].legend, saved_legend, sizeof im->gdes[0].legend);
+                strncpy(im->gdes[i].legend, saved_legend, sizeof im->gdes[0].legend - 1);
+                im->gdes[i].legend[sizeof im->gdes[0].legend - 1] = '\0';
             }
         }
 
@@ -2585,10 +2604,7 @@ int draw_horizontal_grid(
 }
 
 /* this is frexp for base 10 */
-double    frexp10(
-    double,
-    double *);
-double frexp10(
+static double frexp10(
     double x,
     double *e)
 {
@@ -2643,7 +2659,7 @@ int horizontal_log_grid(
     int       mid = -1; /* row in yloglab for major grid */
     double    mspac;    /* smallest major grid spacing (pixels) */
     int       flab;     /* first value in yloglab to use */
-    double    value, tmp, pre_value;
+    double    value, tmp = 0.0, pre_value;
     double    X0, X1, Y0;
     char      graph_label[100];
 
@@ -3016,7 +3032,7 @@ void vertical_grid(
         /* are we inside the graph ? */
         if (tilab < im->start || tilab > im->end)
             continue;
-#if HAVE_STRFTIME
+#ifdef HAVE_STRFTIME
         localtime_r(&tilab, &tm);
         strftime(graph_label, 99, im->xlab_user.stst, &tm);
 #else
@@ -3083,8 +3099,11 @@ int grid_paint(
 {
     long      i;
     int       res = 0;
+    int       j = 0;
+    int       legend_cnt = 0;
     double    X0, Y0;   /* points for filled graph and more */
-    struct gfx_color_t water_color;
+    struct image_title_t image_title;
+    struct gfx_color_t   water_color;
 
     if (im->draw_3d_border > 0) {
 	    /* draw 3d border */
@@ -3156,13 +3175,18 @@ int grid_paint(
     }
 
     /* graph title */
-    gfx_text(im,
-             im->xOriginTitle, im->yOriginTitle+6,
+    image_title = graph_title_split(im->title?im->title:"");
+    while(image_title.lines[j] != NULL) {
+        gfx_text(im,
+             im->ximg / 2, (im->text_prop[TEXT_PROP_TITLE].size * 1.3) + (im->text_prop[TEXT_PROP_TITLE].size * 1.6 * j),
              im->graph_col[GRC_FONT],
              im->
              text_prop[TEXT_PROP_TITLE].
              font_desc,
-             im->tabwidth, 0.0, GFX_H_CENTER, GFX_V_TOP, im->title?im->title:"");
+             im->tabwidth, 0.0, GFX_H_CENTER, GFX_V_TOP, image_title.lines[j]?image_title.lines[j]:"");
+        j++;
+    }
+
     /* rrdtool 'logo' */
     if (!(im->extra_flags & NO_RRDTOOL_TAG)){
         water_color = im->graph_col[GRC_FONT];
@@ -3251,6 +3275,32 @@ int grid_paint(
                      [TEXT_PROP_LEGEND].font_desc,
                      im->tabwidth, 0.0,
                      GFX_H_LEFT, GFX_V_BOTTOM, im->gdes[i].legend);
+            {
+                rrd_infoval_t val;
+                double w, h;
+
+                w = gfx_get_text_width(im, 0,
+                                       im->
+                                       text_prop
+                                       [TEXT_PROP_LEGEND].font_desc,
+                                       im->tabwidth, im->gdes[i].legend);
+                h = gfx_get_text_height(im, 0,
+                                        im->
+                                        text_prop
+                                        [TEXT_PROP_LEGEND].font_desc,
+                                        im->tabwidth, im->gdes[i].legend);
+
+                val.u_str = sprintf_alloc("%s", im->gdes[i].legend);
+                grinfo_push(im,
+                            sprintf_alloc("legend[%ld]", legend_cnt),
+                            RD_I_STR, val);
+                val.u_str = sprintf_alloc("%.0f,%.0f,%.0f,%.0f",
+                                          X0, Y0 - h, X0 + w, Y0);
+                grinfo_push(im,
+                            sprintf_alloc("coords[%ld]", legend_cnt),
+                            RD_I_STR, val);
+                legend_cnt++;
+            }
             /* The legend for GRAPH items starts with "M " to have
                enough space for the box */
             if (im->gdes[i].gf != GF_PRINT &&
@@ -3447,7 +3497,8 @@ int graph_size_location(
          ** spacing is added here, on each side.
          */
         /* if necessary, reduce the font size of the title until it fits the image width */
-        Ytitle = im->text_prop[TEXT_PROP_TITLE].size * 2.6 + 10;
+        image_title_t image_title = graph_title_split(im->title);
+        Ytitle = im->text_prop[TEXT_PROP_TITLE].size * (image_title.count + 1) * 1.6;
     }
     else{
         // we have no title; get a little clearing from the top
@@ -3765,7 +3816,7 @@ int graph_paint(
     }
 
     /* pull the data from the rrd files ... */
-    if (data_fetch(im) == -1)
+    if (data_fetch(im) != 0)
         return -1;
     /* evaluate VDEF and CDEF operations ... */
     if (data_calc(im) == -1)
@@ -3836,14 +3887,16 @@ int graph_paint_timestring(
     /* get actual drawing data and find min and max values */
     if (data_proc(im) == -1)
         return -1;
+
+    /* identify si magnitude Kilo, Mega Giga ? */
     if (!im->logarithmic) {
         si_unit(im);
     }
 
-    /* identify si magnitude Kilo, Mega Giga ? */
-    if (!im->rigid && !im->logarithmic)
-        expand_range(im);   /* make sure the upper and lower limit are
-                               sensible values */
+    /* make sure the upper and lower limit are sensible values
+       if rigid is without alow_shrink skip expanding limits */
+    if ((!im->rigid || im->allow_shrink) && !im->logarithmic)
+        expand_range(im);
 
     info.u_val = im->minval;
     grinfo_push(im, sprintf_alloc("value_min"), RD_I_VAL, info);
@@ -4453,7 +4506,7 @@ int gdes_alloc(
     return 0;
 }
 
-/* copies input untill the first unescaped colon is found
+/* copies input until the first unescaped colon is found
    or until input ends. backslashes have to be escaped as well */
 int scan_for_col(
     const char *const input,
@@ -4563,7 +4616,8 @@ rrd_info_t *rrd_graph_v(
     image_desc_t im;
     rrd_info_t *grinfo;
     struct optparse options;
-    rrd_graph_init(&im);
+    rrd_thread_init();
+    rrd_graph_init(&im, IMAGE_INIT_CAIRO);
     /* a dummy surface so that we can measure text sizes for placements */
     rrd_graph_options(argc, argv, &options, &im);
     if (rrd_test_error()) {
@@ -4664,8 +4718,8 @@ rrd_set_font_desc (
 }
 
 void rrd_graph_init(
-    image_desc_t
-    *im)
+    image_desc_t *im,
+    enum image_init_en init_mode)
 {
     unsigned int i;
     char     *deffont = getenv("RRD_DEFAULT_FONT");
@@ -4690,7 +4744,6 @@ void rrd_graph_init(
     im->draw_3d_border = 2;
     im->dynamic_labels = 0;
     im->extra_flags = 0;
-    im->font_options = cairo_font_options_create();
     im->forceleftspace = 0;
     im->gdes_c = 0;
     im->gdes = NULL;
@@ -4714,6 +4767,7 @@ void rrd_graph_init(
     im->magfact = 1;
     im->prt_c = 0;
     im->rigid = 0;
+    im->allow_shrink = 0;
     im->rendered_image_size = 0;
     im->rendered_image = NULL;
     im->slopemode = 0;
@@ -4752,7 +4806,11 @@ void rrd_graph_init(
     im->yOriginTitle = 0;
     im->ysize = 100;
     im->zoom = 1;
+    im->init_mode = init_mode;
+    im->last_tabwidth = -1;
 
+    if (init_mode == IMAGE_INIT_CAIRO) {
+        im->font_options = cairo_font_options_create();
     im->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 10, 10);
     im->cr = cairo_create(im->surface);
     im->fontmap_mutex = &fontmap_mutex;
@@ -4791,6 +4849,7 @@ void rrd_graph_init(
     cairo_font_options_set_antialias(im->font_options, CAIRO_ANTIALIAS_GRAY);
 
     mutex_unlock(im->fontmap_mutex);
+    }
 
     for (i = 0; i < DIM(graph_col); i++)
         im->graph_col[i] = graph_col[i];
@@ -4878,6 +4937,7 @@ void rrd_graph_options(
         {"left-axis-format",   1012, OPTPARSE_REQUIRED},
         {"left-axis-formatter",1013, OPTPARSE_REQUIRED},
         {"right-axis-formatter",1014, OPTPARSE_REQUIRED},
+        {"allow-shrink",        1015, OPTPARSE_NONE},
         {0}
 };
 /* *INDENT-ON* */
@@ -4885,7 +4945,7 @@ void rrd_graph_options(
 
     rrd_parsetime("end-24h", &start_tv);
     rrd_parsetime("now", &end_tv);
-    
+
     optparse_init(poptions, argc, argv);
     while ((opt = optparse_long(poptions, longopts, NULL)) != -1) {
         int       col_start, col_end;
@@ -5188,8 +5248,11 @@ void rrd_graph_options(
         case 'r':
             im->rigid = 1;
             break;
+        case 1015:
+            im->allow_shrink = 1;
+            break;
         case 'f':
-            im->imginfo = poptions->optarg;
+            im->imginfo = (char *)poptions->optarg;
             break;
         case 'a':
             if ((int)
@@ -6091,4 +6154,73 @@ void time_clean(
         }
     }
     result[jj] = '\0'; /* We must force the end of the string */
+}
+
+image_title_t graph_title_split(
+    const char *title)
+{
+    image_title_t retval;
+    int count = 0;              /* line count */
+    char *found_pos;
+    int found_size;
+
+    retval.lines = malloc((MAX_IMAGE_TITLE_LINES + 1 ) * sizeof(char *));
+
+    char *delims[] = { "\n", "\\n", "<br>", "<br/>" };
+
+    // printf("unsplit title: %s\n", title);
+
+    char *consumed = strdup(title); /* allocates copy */
+    do
+    {
+        /*
+          search for next delimiter occurrence in the title,
+          if found, save the string before the delimiter for the next line & search the remainder
+        */
+        found_pos = 0;
+        found_size  = 0;
+        for(unsigned int i=0; i < sizeof(delims) / sizeof(delims[0]); i++)
+        {
+            // get size of this delimiter
+            int delim_size = strlen(delims[i]);
+
+            // find position of delimiter (0 = not found, otherwise ptr)
+            char *delim_pos = strstr(consumed, delims[i]);
+
+            // do we have a delimiter pointer?
+            if (delim_pos)
+                // have we not found anything yet? or is this position lower than any
+                // any previous ptr?
+                if ((!found_pos) || (delim_pos < found_pos))
+                {
+                    found_pos = delim_pos;
+                    found_size  = delim_size;
+                }
+        }
+
+        // We previous found a delimitor so lets null terminate it
+        if (found_pos)
+            *found_pos = '\0';
+
+        // ignore an empty line caused by a leading delimiter (or two in a row)
+        if (found_pos != consumed)
+        {
+            // strdup allocated space for us, reuse that
+            retval.lines[count] = consumed;
+            ++count;
+
+            consumed = found_pos;
+        }
+
+        // move the consumed pointer past any delimitor, so we can loop around again
+        consumed = consumed + found_size;
+    }
+    // must not create more than MAX lines, so must stop splitting
+    // either when we hit the max, or have no other delimiter
+    while (found_pos && count < MAX_IMAGE_TITLE_LINES);
+
+    retval.lines[count] = NULL;
+    retval.count = count;
+
+    return retval;
 }

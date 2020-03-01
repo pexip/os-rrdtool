@@ -34,7 +34,7 @@
  * library is identical to librrd, but it contains support code for per-thread
  * global variables currently used for error information only. This is similar
  * to how errno per-thread variables are implemented.  librrd_th must be linked
- * alongside of libpthred
+ * alongside of libpthread
  *
  * There is also a new file "THREADS", holding some documentation.
  *
@@ -54,7 +54,7 @@ extern    "C" {
 
 #include <sys/types.h>  /* for off_t */
 
-#ifndef WIN32
+#ifndef _WIN32
 #include <unistd.h>     /* for off_t */
 #else
 #ifdef _MSC_VER
@@ -63,9 +63,11 @@ extern    "C" {
 #endif
 	#define strtoll _strtoi64 
 #endif
+#ifndef __MINGW32__     /* MinGW-w64 has ssize_t and off_t */
 	typedef size_t ssize_t;
 	typedef long off_t;
-#endif 
+#endif
+#endif
 
 #include <time.h>
 #include <stdio.h>      /* for FILE */
@@ -165,6 +167,8 @@ struct rrd_t;
     rrd_info_t * data);
     void      rrd_info_free(
     rrd_info_t *);
+    char      *rrd_list(int, char **);
+    char      *rrd_list_r(int, char *dirname);
     int       rrd_update(
     int,
     char **);
@@ -290,6 +294,9 @@ struct rrd_t;
             unsigned long *ds_cnt,
             char ***ds_namv,
             rrd_value_t **data);
+    int rrd_dump_opt_r(const char *filename,
+                       char *outname,
+                       int opt_noheader);
     int       rrd_dump_r(
     const char *filename,
     char *outname);
@@ -301,7 +308,7 @@ struct rrd_t;
             char ***ret_last_ds);
     time_t    rrd_first_r(
     const char *filename,
-    int rraindex);
+    const int rraindex);
 
     int rrd_dump_cb_r(
     const char *filename,
@@ -338,7 +345,7 @@ struct rrd_t;
 /* returns the current per-thread rrd_context */
     rrd_context_t *rrd_get_context(void);
 
-#ifdef WIN32
+#ifdef _WIN32
 /* this was added by the win32 porters Christof.Wegmann@exitgames.com */
     rrd_context_t *rrd_force_new_context(void);
 #endif
@@ -394,17 +401,18 @@ int       rrd_proc_start_end(
     const char * rrd_scaled_duration (const char * token,
                                       unsigned long divisor,
                                       unsigned long * valuep);
+    void rrd_thread_init(void);
 
 /*
  * The following functions are _internal_ functions needed to read the raw RRD
  * files. Since they are _internal_ they may change with the file format and
- * will be replaced with a more general interface in RRDTool 1.4. Don't use
+ * will be replaced with a more general interface in RRDtool 1.4. Don't use
  * these functions unless you have good reasons to do so. If you do use these
- * functions you will have to adapt your code for RRDTool 1.4!
+ * functions you will have to adapt your code for RRDtool 1.4!
  *
  * To enable the deprecated functions define `RRD_EXPORT_DEPRECATED' before
  * including <rrd_test.h>. You have been warned! If you come back to the
- * RRDTool mailing list and whine about your broken application, you will get
+ * RRDtool mailing list and whine about your broken application, you will get
  * hit with something smelly!
  */
 #if defined(RRD_TOOL_H_3853987DDF7E4709A5B5849E5A6204F4) || defined(RRD_EXPORT_DEPRECATED)

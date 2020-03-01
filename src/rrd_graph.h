@@ -46,7 +46,7 @@
 #define NO_RRDTOOL_TAG 0x400  /* disable the rrdtool tag */
 #define ALLOW_MISSING_DS 0x800  /* missing DS is not fatal */
 
-#define gdes_fetch_key(x)  sprintf_alloc("%s:%d:%d:%d:%d",x.rrd,x.cf,x.cf_reduce,x.start_orig,x.end_orig,x.step_orig)
+#define gdes_fetch_key(x)  sprintf_alloc("%s:%s:%d:%d:%d:%d:%d:%d",x.rrd,x.daemon,x.cf,x.cf_reduce,x.start_orig,x.end_orig,x.step_orig,x.step)
 
 enum tmt_en { TMT_SECOND = 0, TMT_MINUTE, TMT_HOUR, TMT_DAY,
     TMT_WEEK, TMT_MONTH, TMT_YEAR
@@ -203,6 +203,7 @@ enum value_formatter_en {
 #endif
 
 # define MAX_AXIS 4
+# define MAX_IMAGE_TITLE_LINES 3
 
 typedef struct graph_desc_t {
     enum gf_en gf;       /* graphing function */
@@ -216,7 +217,7 @@ typedef struct graph_desc_t {
     long      ds;       /* data source number */
     char      daemon[256];
     enum cf_en cf;      /* consolidation function */
-    enum cf_en cf_reduce;   /* consolidation function for reduce_data() */
+    enum cf_en cf_reduce;   /* consolidation function for rrd_reduce_data() */
     int        cf_reduce_set; /* is the cf_reduce option set */
     struct gfx_color_t col, col2; /* graph color */
 	double    gradheight;
@@ -262,6 +263,8 @@ typedef struct graph_desc_t {
     int yaxisidx;
 } graph_desc_t;
 
+enum image_init_en { IMAGE_INIT_NO_CAIRO, IMAGE_INIT_CAIRO };
+
 typedef struct image_desc_t {
 
     /* configuration of graph */
@@ -289,12 +292,13 @@ typedef struct image_desc_t {
     enum value_formatter_en primary_axis_formatter; /* How to format axis values */
     double    ygridstep;    /* user defined step for y grid */
     int       ylabfact; /* every how many y grid shall a label be written ? */
-    double    tabwidth; /* tabwdith */
+    double    tabwidth; /* tabwidth */
     time_t    start, end;   /* what time does the graph cover */
     unsigned long step; /* any preference for the default step ? */
     rrd_value_t minval, maxval; /* extreme values in the data */
     int       rigid;    /* do not expand range even with
                            values outside */
+    int       allow_shrink; /* less "rigid" --rigid */
     ygrid_scale_t ygrid_scale;  /* calculated y axis grid info */
     int       gridfit;  /* adjust y-axis range etc so all
                            grindlines falls in integer pixel values */
@@ -327,7 +331,7 @@ typedef struct image_desc_t {
     long      base;     /* 1000 or 1024 depending on what we graph */
     char      symbol;   /* magnitude symbol for y-axis */
     float     viewfactor;   /* how should the numbers on the y-axis be scaled for viewing ? */
-    int       unitsexponent;    /* 10*exponent for units on y-asis */
+    int       unitsexponent;    /* 10*exponent for units on y-axis */
     int       unitslength;  /* width of the yaxis labels */
     int       forceleftspace;   /* do not kill the space to the left of the y-axis if there is no grid */
 
@@ -339,7 +343,7 @@ typedef struct image_desc_t {
     long      gdes_c;   /* number of graphics elements */
     graph_desc_t *gdes; /* points to an array of graph elements */
     cairo_surface_t *surface;   /* graphics library */
-    cairo_t  *cr;       /* drawin context */
+    cairo_t  *cr;       /* drawing context */
     cairo_font_options_t *font_options; /* cairo font options */
     cairo_antialias_t graph_antialias;  /* antialiasing for the graph */
     PangoLayout *layout; /* the pango layout we use for writing fonts */
@@ -348,7 +352,17 @@ typedef struct image_desc_t {
     GHashTable* gdef_map;  /* a map of all *def gdef entries for quick access */
     GHashTable* rrd_map;  /* a map of all rrd files in use for gdef entries */
     mutex_t *fontmap_mutex; /* Mutex for locking the global fontmap */
+    enum image_init_en init_mode; /* do we need Cairo/Pango? */
+    double x_pixie; /* scale for X (see xtr() for reference) */
+    double y_pixie; /* scale for Y (see ytr() for reference) */
+    double last_tabwidth; /* (see gfx_prep_text() for reference) */
 } image_desc_t;
+
+typedef struct image_title_t
+{
+    char **lines;
+    int count;
+} image_title_t;
 
 /* Prototypes */
 int       xtr(
@@ -382,7 +396,7 @@ void      expand_range(
     image_desc_t *);
 void      apply_gridfit(
     image_desc_t *);
-int     reduce_data(
+int     rrd_reduce_data(
     enum cf_en,
     unsigned long,
     time_t *,
@@ -392,7 +406,7 @@ int     reduce_data(
     rrd_value_t **);
 int       data_fetch(
     image_desc_t *);
-long      lcd(
+long      rrd_lcd(
     long *);
 int       data_calc(
     image_desc_t *);
@@ -431,6 +445,8 @@ int       graph_paint_timestring(
                                 image_desc_t *,int,int);
 int       graph_paint_xy(
                         image_desc_t *,int,int);
+image_title_t graph_title_split(
+    const char *);
 int       rrd_graph_xport(
     image_desc_t *);
 
@@ -446,7 +462,8 @@ int       scan_for_col(
     int,
     char *const);
 void      rrd_graph_init(
-    image_desc_t *);
+    image_desc_t *,
+    enum image_init_en);
 
 void      time_clean(
     char *result,
@@ -460,7 +477,7 @@ void      rrd_graph_options(
 void      rrd_graph_script(
     int,
     char **,
-    image_desc_t *,
+    image_desc_t *const,
     int);
 int       rrd_graph_color(
     image_desc_t *,
@@ -570,6 +587,14 @@ double    gfx_get_text_width(
     double tabwidth,
     char *text);
 
+/* measure height of a text string */
+double    gfx_get_text_height(
+    image_desc_t *im,
+    double start,
+    PangoFontDescription *font_desc,
+    double tabwidth,
+    char *text);
+
 
 /* convert color */
 gfx_color_t gfx_hex_to_col(
@@ -591,5 +616,4 @@ void      grinfo_push(
     image_desc_t *im,
     char *key,
     rrd_info_type_t type,    rrd_infoval_t value);
-
 

@@ -13,6 +13,15 @@ dnl EX_CHECK_ALL(library, function, header, pkgconf name, tested-version, homepa
 dnl              $1       $2        $3      $4            $5              $6        $7
 dnl
 dnl
+
+dnl
+dnl Fix for 'configure:31803: error: possibly undefined macro: AS_VAR_COPY'
+dnl     when building on RHEL 6 (autoconf 2.63)
+dnl     see https://github.com/gdnsd/gdnsd/issues/85
+m4_ifndef([AS_VAR_COPY],
+[m4_define([AS_VAR_COPY],
+[AS_LITERAL_IF([$1[]$2], [$1=$$2], [eval $1=\$$2])])])
+
 AC_DEFUN([EX_CHECK_ALL],
 [
  AC_LANG_PUSH(C)
@@ -417,8 +426,8 @@ AC_DEFUN([AM_CHECK_PYTHON_HEADERS],
 [AC_REQUIRE([AM_PATH_PYTHON])
 AC_MSG_CHECKING(for headers required to compile python extensions)
 dnl deduce PYTHON_INCLUDES
-py_prefix=`$PYTHON -c "import sys; print sys.prefix"`
-py_exec_prefix=`$PYTHON -c "import sys; print sys.exec_prefix"`
+py_prefix=`$PYTHON -c "import sys; print(sys.prefix)"`
+py_exec_prefix=`$PYTHON -c "import sys; print(sys.exec_prefix)"`
 PYTHON_INCLUDES="-I${py_prefix}/include/python${PYTHON_VERSION}"
 if test "$py_prefix" != "$py_exec_prefix"; then
   PYTHON_INCLUDES="$PYTHON_INCLUDES -I${py_exec_prefix}/include/python${PYTHON_VERSION}"

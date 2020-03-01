@@ -17,18 +17,12 @@ DEB_HOST_MULTIARCH  ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+bindnow
 
-# Use the date of the changelog as a build date:
-BUILD_DATETIME := $(shell dpkg-parsechangelog -S Date)
-BUILD_DATE := $(shell date -u --date="$(BUILD_DATETIME)" +%F)
-BUILD_TIME := $(shell date -u --date="$(BUILD_DATETIME)" +%T)
-export DEB_CPPFLAGS_MAINT_APPEND=-DBUILD_DATE='"$(BUILD_DATE)"' -DBUILD_TIME='"$(BUILD_TIME)"'  # C
-
 # Bindings perls-shared and ruby need this:
 export ABS_TOP_SRCDIR=$(CURDIR)
 export ABS_TOP_BUILDDIR=$(CURDIR)
 
 %:
-	dh $@ --with autoreconf,lua,python2,ruby
+	dh $@ --with lua,python2,python3,ruby
 
 override_dh_auto_configure:
 	dh_auto_configure -- \
@@ -44,14 +38,14 @@ override_dh_auto_configure:
 	dh_auto_configure --buildsystem=lua
 	dh_auto_configure --sourcedirectory=bindings/perl-shared
 	dh_auto_configure --sourcedirectory=bindings/perl-piped
-	dh_auto_configure --sourcedirectory=bindings/python
+	dh_auto_configure --buildsystem=pybuild --sourcedirectory=bindings/python
 	dh_auto_configure --buildsystem=ruby
 
 override_dh_auto_clean:
 	dh_auto_clean --buildsystem=lua
 	dh_auto_clean --sourcedirectory=bindings/perl-shared
 	dh_auto_clean --sourcedirectory=bindings/perl-piped
-	dh_auto_clean --sourcedirectory=bindings/python
+	dh_auto_clean --buildsystem=pybuild --sourcedirectory=bindings/python
 	dh_auto_clean --buildsystem=ruby
 	dh_auto_clean  # Must be called last, after other debhelper's clean
 
@@ -60,7 +54,7 @@ override_dh_auto_build:
 	dh_auto_build --buildsystem=lua
 	dh_auto_build --sourcedirectory=bindings/perl-shared
 	dh_auto_build --sourcedirectory=bindings/perl-piped
-	dh_auto_build --sourcedirectory=bindings/python
+	dh_auto_build --buildsystem=pybuild --sourcedirectory=bindings/python
 	dh_auto_build --buildsystem=ruby
 	# Fix library path to tcl bindings:
 	sed -i -e 's|lib/|lib/tcltk/|' -e 's|/tclrrd|/rrdtool-tcl/tclrrd|' bindings/tcl/pkgIndex.tcl
@@ -75,7 +69,12 @@ override_dh_auto_test:
 	LD_LIBRARY_PATH=$${LD_LIBRARY_PATH:+$$LD_LIBRARY_PATH:}$(CURDIR)/src/.libs \
 	 dh_auto_test --sourcedirectory=bindings/perl-shared
 	dh_auto_test --sourcedirectory=bindings/perl-piped
-	dh_auto_test --sourcedirectory=bindings/python
+	LD_LIBRARY_PATH=$(CURDIR)/src/.libs \
+	PYBUILD_SYSTEM=custom \
+	PYBUILD_BEFORE_TEST='cp -r {dir}/tests {build_dir}' \
+	PYBUILD_AFTER_TEST='rm -rf {build_dir}/tests' \
+	PYBUILD_TEST_ARGS='cd {build_dir}; {interpreter} -m unittest discover' \
+	  dh_auto_test --buildsystem=pybuild --sourcedirectory=bindings/python
 	dh_auto_test --buildsystem=ruby
 
 override_dh_auto_install:
@@ -83,16 +82,19 @@ override_dh_auto_install:
 	dh_auto_install --buildsystem=lua
 	dh_auto_install --sourcedirectory=bindings/perl-shared
 	dh_auto_install --sourcedirectory=bindings/perl-piped
-	dh_auto_install --sourcedirectory=bindings/python
+	dh_auto_install --buildsystem=pybuild --sourcedirectory=bindings/python
 	dh_auto_install --buildsystem=ruby
 
 override_dh_install:
 	# We don't install systemd files yet, because it changes socket location.
 	# This may need a transition with other packages (TODO).
-	dh_install -X.la -X.txt -X.pod -Xsystemd --fail-missing
+	dh_install -X.la -X.txt -X.pod -Xsystemd
 
 override_dh_installdocs:
 	dh_installdocs -A CONTRIBUTORS NEWS
+
+override_dh_missing:
+	dh_missing -X.la -X.txt -X.pod -Xsystemd --fail-missing
 
 override_dh_strip:
 	dh_strip --dbg-package=rrdtool-dbg

@@ -27,7 +27,7 @@
  *
  * Revision 1.3  2001/03/07 21:21:54  oetiker
  * complete rewrite of rrdgraph documentation. This also includes info
- * on upcomming/planned changes to the rrdgraph interface and functionality
+ * on upcoming/planned changes to the rrdgraph interface and functionality
  * -- Alex van den Bogaerdt <alex@slot.hollandcasino.nl>
  *
  * Revision 1.2  2001/03/04 13:01:55  oetiker
@@ -49,21 +49,21 @@
 #include "rrd_modify.h"
 #include "rrd_client.h"
 
-int       set_hwarg(
+static int set_hwarg(
     rrd_t *rrd,
     enum cf_en cf,
     enum rra_par_en rra_par,
     const char *arg);
-int       set_deltaarg(
+static int set_deltaarg(
     rrd_t *rrd,
     enum rra_par_en rra_par,
     const char *arg);
-int       set_windowarg(
+static int set_windowarg(
     rrd_t *rrd,
     enum rra_par_en,
     const char *arg);
 
-int set_hwsmootharg(
+static int set_hwsmootharg(
     rrd_t *rrd,
     enum cf_en cf,
     enum rra_par_en rra_par,
@@ -116,6 +116,10 @@ int rrd_tune(
     struct optparse options;
     int opt;
 
+    rrd_thread_init();
+    /* Fix CWE-457 */
+    memset(&rrd, 0, sizeof(rrd_t));
+
     /* before we open the input RRD, we should flush it from any caching
     daemon, because we might totally rewrite it later on */
 
@@ -142,6 +146,7 @@ int rrd_tune(
     // connect to daemon (will take care of environment variable automatically)
     if (rrdc_connect(opt_daemon) != 0) {
     	rrd_set_error("Cannot connect to daemon");
+    	free(opt_daemon);
 	return 1;
     }
 
@@ -150,7 +155,7 @@ int rrd_tune(
 	opt_daemon = NULL;
     }
 
-    if (options.optind < 0 || options.optind >= options.argc) {
+    if (!options.optind || options.optind >= options.argc) {
 	// missing file name...
 	rrd_set_error("missing file name");
 	goto done;
@@ -169,7 +174,8 @@ int rrd_tune(
     }
 
     rrd_init(&rrd);
-    rrd_file = rrd_open(in_filename, &rrd, RRD_READWRITE | RRD_READAHEAD | RRD_READVALUES);
+    rrd_file = rrd_open(in_filename, &rrd, RRD_READWRITE | RRD_LOCK |
+                                           RRD_READAHEAD | RRD_READVALUES);
     if (rrd_file == NULL) {
 	goto done;
     }
@@ -401,11 +407,7 @@ int rrd_tune(
             }
     }
 
-    optind = handle_modify(&rrd, in_filename, options.argc, options.argv, options.optind + 1, opt_newstep);
-    if (options.optind < 0) {
-	goto done;
-    }
-    
+    options.optind = handle_modify(&rrd, in_filename, options.argc, options.argv, options.optind + 1, opt_newstep);
     rc = 0;
 done:
     if (in_filename && rrdc_is_any_connected()) {
@@ -415,11 +417,11 @@ done:
 	rrdc_forget(in_filename);
 	rrd_clear_error();
         
-        if (e && *e) {
+        if (e) {
             rrd_set_error(e);
-        }
-        if (e) free(e);
-        
+            free(e);
+        } else
+            rrd_set_error("error message was lost (out of memory)");
     }
     if (rrd_file) {
 	rrd_close(rrd_file);
@@ -428,7 +430,7 @@ done:
     return rc;
 }
 
-int set_hwarg(
+static int set_hwarg(
     rrd_t *rrd,
     enum cf_en cf,
     enum rra_par_en rra_par,
@@ -451,7 +453,7 @@ int set_hwarg(
     }
     /* does the appropriate RRA exist?  */
     for (i = 0; i < rrd->stat_head->rra_cnt; ++i) {
-        if (cf_conv(rrd->rra_def[i].cf_nam) == cf) {
+        if (rrd_cf_conv(rrd->rra_def[i].cf_nam) == cf) {
             rra_idx = i;
             break;
         }
@@ -466,7 +468,7 @@ int set_hwarg(
     return 0;
 }
 
-int set_hwsmootharg(
+static int set_hwsmootharg(
     rrd_t *rrd,
     enum cf_en cf,
     enum rra_par_en rra_par,
@@ -491,7 +493,7 @@ int set_hwsmootharg(
     }
     /* does the appropriate RRA exist?  */
     for (i = 0; i < rrd->stat_head->rra_cnt; ++i) {
-        if (cf_conv(rrd->rra_def[i].cf_nam) == cf) {
+        if (rrd_cf_conv(rrd->rra_def[i].cf_nam) == cf) {
             rra_idx = i;
             break;
         }
@@ -506,7 +508,7 @@ int set_hwsmootharg(
     return 0;
 }
 
-int set_deltaarg(
+static int set_deltaarg(
     rrd_t *rrd,
     enum rra_par_en rra_par,
     const char *arg)
@@ -528,7 +530,7 @@ int set_deltaarg(
 
     /* does the appropriate RRA exist?  */
     for (i = 0; i < rrd->stat_head->rra_cnt; ++i) {
-        if (cf_conv(rrd->rra_def[i].cf_nam) == CF_FAILURES) {
+        if (rrd_cf_conv(rrd->rra_def[i].cf_nam) == CF_FAILURES) {
             rra_idx = i;
             break;
         }
@@ -543,7 +545,7 @@ int set_deltaarg(
     return 0;
 }
 
-int set_windowarg(
+static int set_windowarg(
     rrd_t *rrd,
     enum rra_par_en rra_par,
     const char *arg)
@@ -561,7 +563,7 @@ int set_windowarg(
     }
     /* does the appropriate RRA exist?  */
     for (i = 0; i < rrd->stat_head->rra_cnt; ++i) {
-        if (cf_conv(rrd->rra_def[i].cf_nam) == CF_FAILURES) {
+        if (rrd_cf_conv(rrd->rra_def[i].cf_nam) == CF_FAILURES) {
             rra_idx = i;
             break;
         }

@@ -3,14 +3,11 @@ Section: utils
 Priority: optional
 Maintainer: Pexip AS <packaging@pexip.com>
 XSBC-Pexip-Original-Maintainer: Debian RRDtool Team <pkg-rrdtool-maint@lists.alioth.debian.org>
-XSBC-Pexip-Original-Uploaders: Sebastian Harl <tokkee@debian.org>,
-           Alexander Wirt <formorer@debian.org>,
-           Bernd Zeimetz <bzed@debian.org>,
+XSBC-Pexip-Original-Uploaders: Alexander Wirt <formorer@debian.org>,
            Jean-Michel Vourgère <nirgal@debian.org>
-Standards-Version: 3.9.8
+Standards-Version: 4.3.0
 Build-Depends: dc,
-               debhelper (>= 9),
-               dh-autoreconf,
+               debhelper (>= 11),
                dh-exec (>=0.3),
                dh-lua,
                dh-python,
@@ -21,11 +18,15 @@ Build-Depends: dc,
                perl (>= 5.8.0),
                python-all-dbg (>= 2.6.6-3~),
                python-all-dev (>= 2.6.6-3~),
+               python-setuptools,
+               python3-all-dbg,
+               python3-all-dev,
+               python3-setuptools,
                tcl-dev (<= 9),
                tcl-dev (>= 8)
-Homepage: http://oss.oetiker.ch/rrdtool/
-Vcs-Browser: https://anonscm.debian.org/cgit/pkg-rrdtool/rrdtool.git
-Vcs-Git: https://anonscm.debian.org/git/pkg-rrdtool/rrdtool.git
+Homepage: https://oss.oetiker.ch/rrdtool/
+Vcs-Browser: https://salsa.debian.org/rrdtool-team/rrdtool
+Vcs-Git: https://salsa.debian.org/rrdtool-team/rrdtool.git
 XS-Ruby-Versions: all
 XS-Pexip-Upstream: http://ftp.debian.org/debian/ buster
 
@@ -50,7 +51,7 @@ Description: time-series data storage and display system (programs)
 
 Package: rrdcached
 Architecture: kfreebsd-any linux-any
-Depends: ${misc:Depends}, ${shlibs:Depends}
+Depends: ${misc:Depends}, ${shlibs:Depends}, lsb-base
 Description: data caching daemon for RRDtool
  RRDCacheD is a daemon that receives updates to existing RRD files, accumulates
  them and, if enough have been received or a defined time has passed, writes
@@ -61,16 +62,18 @@ Description: data caching daemon for RRDtool
 Package: rrdtool-dbg
 Architecture: any
 Multi-Arch: same
-Priority: extra
 Section: debug
 Depends: librrd8 (= ${binary:Version}),
          ${misc:Depends},
          ${python:Depends},
+         ${python3:Depends},
          ${shlibs:Depends}
 Recommends: librrds-perl (= ${binary:Version}),
             lua-rrd (= ${binary:Version}),
             python-all-dbg,
             python-rrdtool (= ${binary:Version}),
+            python3-all-dbg,
+            python3-rrdtool (= ${binary:Version}),
             rrdtool (= ${binary:Version}),
             rrdtool-tcl (= ${binary:Version}),
             ruby-rrd (= ${binary:Version})
@@ -182,6 +185,22 @@ Description: time-series data storage and display system (Python interface)
  .
  This package contains a Python interface to RRDs.
 
+Package: python3-rrdtool
+Architecture: any
+Multi-Arch: same
+Section: python
+Depends: ${misc:Depends}, ${python3:Depends}, ${shlibs:Depends}
+Provides: ${python3:Provides}
+Description: time-series data storage and display system (Python3 interface)
+ The Round Robin Database Tool (RRDtool) is a system to store and display
+ time-series data (e.g. network bandwidth, machine-room temperature,
+ server load average). It stores the data in Round Robin Databases (RRDs),
+ a very compact way that will not expand over time. RRDtool processes the
+ extracted data to enforce a certain data density, allowing for useful
+ graphical representation of data values.
+ .
+ This package contains a Python3 interface to RRDs.
+
 Package: ruby-rrd
 Architecture: any
 Multi-Arch: same
@@ -236,21 +255,3 @@ Description: time-series data storage and display system (Lua development)
  graphical representation of data values.
  .
  This package contains development files for the Lua interfaces to RRDs.
-
-Package: liblua5.1-rrd0
-Architecture: all
-Section: oldlibs
-Priority: extra
-Depends: lua-rrd, ${misc:Depends}
-Description: Transitional package to lua-rrd
- This is a transitional package for liblua5.1-rrd0 to ease upgrades
- to the lua-rrd package. It can safely be removed.
-
-Package: liblua5.1-rrd-dev
-Architecture: all
-Section: oldlibs
-Priority: extra
-Depends: lua-rrd-dev, ${misc:Depends}
-Description: Transitional package to lua-rrd-dev
- This is a transitional package for liblua5.1-rrd-dev to ease upgrades
- to the lua-rrd-dev package. It can safely be removed.
