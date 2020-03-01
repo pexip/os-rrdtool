@@ -1,3 +1,9 @@
+rrdtool (1.7.1-2pexip1) pexip; urgency=medium
+
+  * Migrate to Buster
+
+ -- Vincent Sanders <vince@pexip.com>  Sun, 01 Mar 2020 19:25:25 +0000
+
 rrdtool (1.7.1-2) unstable; urgency=medium
 
   * Cherry pick commit from 1.7.2 to prevent daemon segfault. 
