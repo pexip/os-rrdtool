@@ -1,13 +1,12 @@
 Source: rrdtool
 Section: utils
 Priority: optional
-Maintainer: Debian RRDtool Team <pkg-rrdtool-maint@lists.alioth.debian.org>
+Maintainer: Debian RRDtool Team <team+rrdtool@tracker.debian.org>
 Uploaders: Alexander Wirt <formorer@debian.org>,
            Jean-Michel Vourgère <nirgal@debian.org>
 Standards-Version: 4.4.1
 Build-Depends: dc,
-               debhelper-compat (= 12),
-               dh-exec (>=0.3),
+               debhelper-compat (= 13),
                dh-lua,
                dh-python,
                gem2deb,
@@ -16,7 +15,6 @@ Build-Depends: dc,
                libpng-dev,
                libxml2-dev,
                perl (>= 5.8.0),
-               python3-all-dbg,
                python3-all-dev,
                python3-setuptools,
                tcl-dev (<= 9),
@@ -154,29 +152,6 @@ Description: time-series data storage and display system (Python3 interface)
  graphical representation of data values.
  .
  This package contains a Python3 interface to RRDs.
-
-Package: python3-rrdtool-dbg
-Architecture: any
-Multi-Arch: same
-Section: debug
-Pre-Depends: ${misc:Pre-Depends}
-Depends: python3-rrdtool (= ${binary:Version}),
-         ${misc:Depends},
-         ${python3:Depends},
-         ${shlibs:Depends}
-Provides: ${python3:Provides}
-Breaks: rrdtool-dbg
-Replaces: rrdtool-dbg
-Description: time-series data storage and display system (Python3 debug interface)
- The Round Robin Database Tool (RRDtool) is a system to store and display
- time-series data (e.g. network bandwidth, machine-room temperature,
- server load average). It stores the data in Round Robin Databases (RRDs),
- a very compact way that will not expand over time. RRDtool processes the
- extracted data to enforce a certain data density, allowing for useful
- graphical representation of data values.
- .
- This package contains the Python3 debug interface to RRDs, and the debugging
- symbols for both the non-debug and the debug python3 interfaces.
 
 Package: ruby-rrd
 Architecture: any

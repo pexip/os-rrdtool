@@ -1,3 +1,24 @@
+rrdtool (1.7.2-4) unstable; urgency=medium
+
+  [ Jean-Michel Vourgère ]
+  * Changed maintainer team address from alioth to tracker.d.o.
+  * d/copyright: Fixed tclrrd.c double entry.
+  * Bumped debhelper compat level to 13:
+    - librrds-perl.install and rrdtool-tcl.install use builtin variables
+      expansion.
+    - Dropped build-dependency on dh-exec.
+    - Removed --fail-missing in dh_missing, as it is now the default.
+  * Bumped d/watch to format 4.
+  * New patch python3_example.
+  * Drop package python3-rrdtool-dbg. (Closes: #994376)
+
+  [ Debian Janitor ]
+  * Set upstream metadata fields: Bug-Database, Bug-Submit, Repository,
+    Repository-Browse.
+  * Wrap long lines in changelog entries: 1.0.42-2.
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Thu, 18 Nov 2021 17:35:17 +0100
+
 rrdtool (1.7.2-3) unstable; urgency=medium
 
   * Added Breaks+Replaces for debug symbols migration. (Closes: #943840)
@@ -909,9 +930,9 @@ rrdtool (1.0.45-1) unstable; urgency=low
 
 rrdtool (1.0.42-2) unstable; urgency=low
 
-  * Build-Depends: libpng12-dev instead of libpng3-dev (when will the madness end?)
-    (Closes: #195224
-     I hope this will also fix weird version mismatch problems (Closes: #194900)
+  * Build-Depends: libpng12-dev instead of libpng3-dev (when will the madness
+    end?) (Closes: #195224) I hope this will also fix weird version mismatch
+    problems (Closes: #194900)
 
  -- Matt Zimmerman <mdz@debian.org>  Sat, 31 May 2003 15:06:42 -0400
 

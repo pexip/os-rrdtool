@@ -1,0 +1,15 @@
+Description: Switch example script to use python3
+Author: Jean-Michel Vourgère <nirgal@debian.org>
+Applied-Upstream: commit:0df7b5a39a5f8747a5ab11a8c172c4644e6edd22
+Last-Update: 2020-12-30
+
+--- rrdtool-1.7.2.orig/examples/stripes.py
++++ rrdtool-1.7.2/examples/stripes.py
+@@ -1,6 +1,4 @@
+-#! /usr/bin/python
+-
+-from __future__ import print_function
++#! /usr/bin/python3
+ 
+ import locale
+ import random

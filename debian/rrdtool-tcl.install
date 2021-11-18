@@ -1,3 +1,2 @@
-#!/usr/bin/dh-exec
 usr/lib/${DEB_HOST_MULTIARCH}/tcl* usr/lib/tcltk/${DEB_HOST_MULTIARCH}/rrdtool-tcl/
 usr/lib/${DEB_HOST_MULTIARCH}/rrdtool/pkgIndex.tcl usr/lib/tcltk/${DEB_HOST_MULTIARCH}/rrdtool-tcl/
