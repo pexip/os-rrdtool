@@ -28,7 +28,7 @@ Homepage: https://oss.oetiker.ch/rrdtool/
 Vcs-Browser: https://salsa.debian.org/rrdtool-team/rrdtool
 Vcs-Git: https://salsa.debian.org/rrdtool-team/rrdtool.git
 XS-Ruby-Versions: all
-XS-Pexip-Upstream: http://ftp.debian.org/debian/ buster
+XS-Pexip-Upstream: http://deb.debian.org/debian/ bullseye
 
 Package: rrdtool
 Architecture: any
