@@ -1,3 +1,31 @@
+rrdtool (1.7.2-3) unstable; urgency=medium
+
+  * Added Breaks+Replaces for debug symbols migration. (Closes: #943840)
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Thu, 31 Oct 2019 09:51:05 +0100
+
+rrdtool (1.7.2-2) unstable; urgency=medium
+
+  * Switch arch packages to use automatic debug packages, but for
+    python3-rrdtool-dbg that contains more that symbols. (Closes: #886181)
+  * Bumped compat to 12. Added Pre-Depends.
+  * Support python 3.8 .so naming changes. (Closes: #942639)
+  * Added Build-Depends-Package in symbols file.
+  * Bumped policy to 4.4.1.
+  * Added Rules-Requires-Root: no.
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Sun, 20 Oct 2019 00:46:05 +0200
+
+rrdtool (1.7.2-1) unstable; urgency=medium
+
+  * New upstream version.
+  * Drop patch applied upstream.
+  * Bumped standard to 4.4.0.
+  * Removed python2 support (See: #938414).
+  * Switched from d/compat to debhelper-compat build-depends.
+
+ -- Jean-Michel Vourgère <nirgal@debian.org>  Thu, 05 Sep 2019 18:13:41 +0200
+
 rrdtool (1.7.1-2pexip2) pexip; urgency=medium
 
   * Rebuild in buster environment
@@ -12,7 +40,7 @@ rrdtool (1.7.1-2pexip1) pexip; urgency=medium
 
 rrdtool (1.7.1-2) unstable; urgency=medium
 
-  * Cherry pick commit from 1.7.2 to prevent daemon segfault. 
+  * Cherry pick commit from 1.7.2 to prevent daemon segfault.
 
  -- Jean-Michel Vourgère <nirgal@debian.org>  Thu, 30 May 2019 22:28:06 +0200
 

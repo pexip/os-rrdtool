@@ -11,5 +11,5 @@ package has been left out of the Debian packages as it does not provide any
 further benefits over the other documentation.
 
 More examples and useful applications can be found at the upstream site at
-<http://oss.oetiker.ch/rrdtool/pub/contrib/>.
+<https://oss.oetiker.ch/rrdtool/pub/contrib/>.
 

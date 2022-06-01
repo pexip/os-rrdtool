@@ -16,13 +16,6 @@ dnl a.b.c
 AC_INIT([rrdtool],m4_esyscmd([tr -d '\n' < VERSION]))
 AC_CONFIG_AUX_DIR(conftools)
 
-dnl for testing a numerical version number comes handy
-dnl the released version are
-dnl a.bccc
-dnl the devel versions will be something like
-dnl a.b999yymmddhh
-NUMVERS=1.7001
-AC_SUBST(NUMVERS)
 
 dnl for the linker to understand which versions the library are compatible with
 dnl each other we must keep a separate library version cout of the format c:r:a.
@@ -32,7 +25,7 @@ dnl - if any functionality was removed do c++,r=0,a=0.
 dnl
 dnl see http://sourceware.org/autobook/autobook/autobook_91.html
 dnl
-LIBVERS=10:0:2
+LIBVERS=10:1:2
 AC_SUBST(LIBVERS)
 
 AC_CANONICAL_TARGET
@@ -455,7 +448,7 @@ AC_LINK_IFELSE(
     [ AC_LINK_IFELSE(
           [AC_LANG_PROGRAM(
                 [[#ifdef __MINGW32__
-#include <pthread.h>
+#define _POSIX_THREAD_SAFE_FUNCTIONS 200112L
 #endif
 #include <time.h>]],
                 [[ctime_r(NULL,NULL)]])],
@@ -650,6 +643,13 @@ AC_PATH_PROG(PERL, perl, no)
 AC_PATH_PROG(POD2MAN, pod2man, no)
 AC_PATH_PROG(POD2HTML, pod2html, no)
 
+dnl for testing a numerical version number comes handy
+dnl the released version are
+dnl a.bccc
+dnl the devel versions will be something like
+dnl a.b999yymmddhh
+NUMVERS=m4_esyscmd([perl -ne 'my @x=split /\./;printf "%d.%d%03d", @x' VERSION])
+AC_SUBST(NUMVERS)
 
 AC_ARG_ENABLE(perl,AS_HELP_STRING([--disable-perl],[do not build the perl modules]),
 [],[enable_perl=yes])
@@ -1057,7 +1057,7 @@ AC_OUTPUT
 AC_MSG_CHECKING(in)
 AC_MSG_RESULT(and out again)
 
-echo $ECHO_N "ordering CD from http://tobi.oetiker.ch/wish $ECHO_C" 1>&6
+echo $ECHO_N "ordering CD from https://tobi.oetiker.ch/wish $ECHO_C" 1>&6
 sleep 1
 echo $ECHO_N ".$ECHO_C" 1>&6
 sleep 1
@@ -1116,7 +1116,7 @@ echo "Type 'make etc-install' to install systemd support for rrdcached"
 fi
 echo
 echo "       ... that wishlist is NO JOKE. If you find RRDtool useful"
-echo "make me happy. Go to http://tobi.oetiker.ch/wish and"
+echo "make me happy. Go to https://tobi.oetiker.ch/wish and"
 echo "place an order."
 echo
 echo "                               -- Tobi Oetiker <tobi@oetiker.ch>"
