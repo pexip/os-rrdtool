@@ -1,0 +1,2 @@
+# Lintian is confused by ${prefix} usage
+bin-sbin-mismatch usr/share/doc/rrdtool/examples/piped-demo.pl bin/rrdtool -> usr/bin/rrdtool
