@@ -1,3 +1,9 @@
+rrdtool (1.7.2-4+pexip24u3) pexip-bookworm; urgency=medium
+
+  * New versioning scheme
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Thu, 01 Feb 2024 16:28:52 +0000
+
 rrdtool (1.7.2-4pexip2) pexip-bookworm; urgency=medium
 
   * Bookworm build for product distribution
