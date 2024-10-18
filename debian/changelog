@@ -1,3 +1,17 @@
+rrdtool (1.7.2-4.2) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * debian/patches: Fix build on armel and armhf (Closes: #1085153)
+
+ -- Sebastian Ramacher <sramacher@debian.org>  Fri, 18 Oct 2024 20:17:15 +0200
+
+rrdtool (1.7.2-4.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Rename libraries for 64-bit time_t transition.  Closes: #1064325
+
+ -- Benjamin Drung <bdrung@debian.org>  Thu, 29 Feb 2024 15:29:46 +0000
+
 rrdtool (1.7.2-4) unstable; urgency=medium
 
   [ Jean-Michel Vourgère ]

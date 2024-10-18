@@ -1,4 +1,4 @@
-librrd.so.8 librrd8 #MINVER#
+librrd.so.8 librrd8t64 #MINVER#
 * Build-Depends-Package: librrd8-dev
  rrd_add_ptr@Base 1.4~rc2
  rrd_add_ptr_chunk@Base 1.5.3
