@@ -6,7 +6,7 @@ XSBC-Pexip-Original-Maintainer: Debian RRDtool Team <team+rrdtool@tracker.debian
 XSBC-Pexip-Original-Uploaders: Alexander Wirt <formorer@debian.org>,
            Jean-Michel Vourgère <nirgal@debian.org>
 Standards-Version: 4.4.1
-Build-Depends: dc,
+Build-Depends: dpkg-dev (>= 1.22.5), dc,
                debhelper-compat (= 13),
                dh-lua,
                dh-python,
@@ -57,7 +57,10 @@ Description: data caching daemon for RRDtool
  Those setups usually run into I/O related problems. RRDCacheD's goal is to
  alleviate these problems.
 
-Package: librrd8
+Package: librrd8t64
+Provides: ${t64:Provides}
+Replaces: librrd8
+Breaks: librrd8 (<< ${source:Version})
 Architecture: any
 Multi-Arch: same
 Section: libs
@@ -79,7 +82,7 @@ Architecture: any
 Multi-Arch: same
 Section: libdevel
 Pre-Depends: ${misc:Pre-Depends}
-Depends: librrd8 (= ${binary:Version}), ${misc:Depends}
+Depends: librrd8t64 (= ${binary:Version}), ${misc:Depends}
 Description: time-series data storage and display system (development)
  The Round Robin Database Tool (RRDtool) is a system to store and display
  time-series data (e.g. network bandwidth, machine-room temperature,
